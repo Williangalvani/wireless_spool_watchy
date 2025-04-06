@@ -69,43 +69,19 @@ GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> display(
 static lv_disp_draw_buf_t draw_buf; // Buffer for drawing
 static lv_disp_drv_t disp_drv;      // Display driver
 
-// Temporary buffer for error diffusion dithering (holds grayscale values)
-uint8_t *ditherBuffer = NULL;
+// Buffer to store the entire screen content for comparison
+static uint8_t *global_display_buffer = NULL;
+static bool global_buffer_initialized = false;
 
-// Function to perform Floyd-Steinberg dithering
-void dither_image(uint8_t *pixels, int width, int height) {
-  for (int y = 0; y < height; y++) {
-    for (int x = 0; x < width; x++) {
-      // Get current pixel
-      uint8_t oldPixel = pixels[y * width + x];
-      
-      // Apply threshold to decide black or white
-      uint8_t newPixel = (oldPixel < 128) ? 0 : 255;
-      
-      // Calculate quantization error
-      int error = oldPixel - newPixel;
-      
-      // Store the new pixel
-      pixels[y * width + x] = newPixel;
-      
-      // Distribute error to neighboring pixels
-      if (x + 1 < width)
-        pixels[y * width + x + 1] = min(255, max(0, pixels[y * width + x + 1] + error * 7 / 16));
-      
-      if (y + 1 < height) {
-        if (x > 0)
-          pixels[(y + 1) * width + x - 1] = min(255, max(0, pixels[(y + 1) * width + x - 1] + error * 3 / 16));
-          
-        pixels[(y + 1) * width + x] = min(255, max(0, pixels[(y + 1) * width + x] + error * 5 / 16));
-        
-        if (x + 1 < width)
-          pixels[(y + 1) * width + x + 1] = min(255, max(0, pixels[(y + 1) * width + x + 1] + error * 1 / 16));
-      }
-    }
-  }
-}
+// Flag to enable/disable verbose logging - set to true to see detailed pixel changes
+static bool verbose_pixel_logging = true;
+// Limit the number of pixel changes to log to avoid flooding Serial
+static const int max_pixel_changes_to_log = 10;
 
-// Simplified display flush callback with dithering for e-paper display
+// Temporary buffer for binary thresholding (holds grayscale values)
+uint8_t *thresholdBuffer = NULL;
+
+// Simplified display flush callback with simple thresholding for e-paper display
 static void my_disp_flush(lv_disp_drv_t * disp, const lv_area_t * area, lv_color_t * px_map)
 {
   // For e-paper display, we need a simple approach
@@ -114,58 +90,137 @@ static void my_disp_flush(lv_disp_drv_t * disp, const lv_area_t * area, lv_color
   
   Serial.printf("Flushing area: x1=%d, y1=%d, x2=%d, y2=%d\n", area->x1, area->y1, area->x2, area->y2);
   
-  // Allocate or reallocate the dither buffer if needed
-  if (ditherBuffer == NULL || disp->hor_res * disp->ver_res != lvScreenWidth * lvScreenHeight) {
-    if (ditherBuffer != NULL) 
-      free(ditherBuffer);
+  // Allocate or reallocate the threshold buffer if needed
+  if (thresholdBuffer == NULL || disp->hor_res * disp->ver_res != lvScreenWidth * lvScreenHeight) {
+    if (thresholdBuffer != NULL) 
+      free(thresholdBuffer);
     
-    ditherBuffer = (uint8_t*)malloc(w * h);
-    if (ditherBuffer == NULL) {
-      Serial.println("Failed to allocate dither buffer!");
+    thresholdBuffer = (uint8_t*)malloc(w * h);
+    if (thresholdBuffer == NULL) {
+      Serial.println("Failed to allocate threshold buffer!");
       lv_disp_flush_ready(disp);
       return;
     }
   }
   
-  // Convert LVGL color to grayscale
+  // Initialize the global display buffer if not already allocated
+  // This buffer stores the ENTIRE screen state, not just the current update area
+  if (global_display_buffer == NULL) {
+    // Allocate buffer for the entire screen
+    global_display_buffer = (uint8_t*)calloc(disp->hor_res * disp->ver_res, sizeof(uint8_t));
+    if (global_display_buffer == NULL) {
+      Serial.println("Failed to allocate global display buffer!");
+      // Continue without comparison as this is first-time initialization
+    } else {
+      Serial.printf("Allocated global buffer for entire %dx%d screen\n", disp->hor_res, disp->ver_res);
+      // Initialize to all white (255)
+      memset(global_display_buffer, 255, disp->hor_res * disp->ver_res);
+      global_buffer_initialized = true;
+    }
+  }
+  
+  // Convert LVGL color to grayscale with simple thresholding
   for (int y = 0; y < h; y++) {
     for (int x = 0; x < w; x++) {
       lv_color_t pixel = px_map[y * w + x];
       uint8_t gray = lv_color_brightness(pixel);
-      ditherBuffer[y * w + x] = gray;
+      
+      // Simple binary thresholding (no dithering)
+      thresholdBuffer[y * w + x] = (gray < 128) ? 0 : 255;
     }
   }
   
-  // Perform dithering on the grayscale values
-  dither_image(ditherBuffer, w, h);
+  // Check if the display content has changed
+  bool has_changes = false;
+  int change_count = 0;
   
-  // Set up the window and draw to display
-  display.setPartialWindow(area->x1, area->y1, w, h);
-  display.firstPage();
-  
-  do {
-    // Clear with white
-    display.fillScreen(GxEPD_WHITE);
-    
-    // Draw the dithered image
+  if (global_buffer_initialized) {
+    // Compare the new thresholded content with the previous global buffer content
     for (int y = 0; y < h; y++) {
       for (int x = 0; x < w; x++) {
-        // Dithered values are either 0 or 255
-        uint16_t color = (ditherBuffer[y * w + x] == 0) ? GxEPD_BLACK : GxEPD_WHITE;
-        display.drawPixel(area->x1 + x, area->y1 + y, color);
+        // Calculate global buffer position for this pixel
+        int global_x = area->x1 + x;
+        int global_y = area->y1 + y;
+        
+        // Skip invalid coordinates (should never happen)
+        if (global_x >= disp->hor_res || global_y >= disp->ver_res) {
+          continue;
+        }
+        
+        // Get the previous value from the global buffer
+        int global_idx = global_y * disp->hor_res + global_x;
+        uint8_t prev_value = global_display_buffer[global_idx];
+        uint8_t new_value = thresholdBuffer[y * w + x];
+        
+        // Compare values
+        if (new_value != prev_value) {
+          has_changes = true;
+          change_count++;
+          
+          // Log detailed pixel change information if verbose logging is enabled
+          if (verbose_pixel_logging && change_count <= max_pixel_changes_to_log) {
+            Serial.printf("Pixel change at (%d,%d): %d -> %d\n", 
+                         global_x, global_y, 
+                         prev_value, 
+                         new_value);
+          }
+          
+          // Update the global buffer with the new value immediately
+          global_display_buffer[global_idx] = new_value;
+        }
       }
     }
-  } while(display.nextPage());
+    
+    // Log total changes
+    if (has_changes) {
+      Serial.printf("Total pixel changes: %d out of %d pixels\n", change_count, w * h);
+    }
+  } else {
+    // If global buffer doesn't exist, assume changes
+    has_changes = true;
+    Serial.println("First update - no global buffer for comparison");
+  }
+  
+  // Only update the display if content has changed
+  if (has_changes) {
+    Serial.println("Content changed, updating display");
+    
+    // Set up the window and draw to display
+    display.setPartialWindow(area->x1, area->y1, w, h);
+    display.firstPage();
+    
+    do {
+      // Clear with white
+      display.fillScreen(GxEPD_WHITE);
+      
+      // Draw the thresholded image
+      for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+          // Values are either 0 or 255
+          uint16_t color = (thresholdBuffer[y * w + x] == 0) ? GxEPD_BLACK : GxEPD_WHITE;
+          display.drawPixel(area->x1 + x, area->y1 + y, color);
+        }
+      }
+    } while(display.nextPage());
+  } else {
+    Serial.println("No changes, skipping display update");
+  }
   
   // Inform LVGL that the flushing is done
   lv_disp_flush_ready(disp);
 }
 
-// Free dither buffer when the program exits
+// Free buffers when the program exits
 void cleanup() {
-  if (ditherBuffer != NULL) {
-    free(ditherBuffer);
-    ditherBuffer = NULL;
+  if (thresholdBuffer != NULL) {
+    free(thresholdBuffer);
+    thresholdBuffer = NULL;
+  }
+  
+  if (global_display_buffer != NULL) {
+    free(global_display_buffer);
+    global_display_buffer = NULL;
+    global_buffer_initialized = false;
   }
 }
 
@@ -204,9 +259,15 @@ void setupOTA() {
   ArduinoOTA.onStart([]() {
     Serial.println("OTA update starting...");
     // Stop LVGL to prevent display conflicts during update
-    if (ditherBuffer) {
-      free(ditherBuffer);
-      ditherBuffer = NULL;
+    if (thresholdBuffer) {
+      free(thresholdBuffer);
+      thresholdBuffer = NULL;
+    }
+    
+    if (global_display_buffer) {
+      free(global_display_buffer);
+      global_display_buffer = NULL;
+      global_buffer_initialized = false;
     }
   });
   
@@ -248,6 +309,12 @@ void hal_cleanup(void);
 #define LV_FONT_MONTSERRAT_MEDIUM_29 &lv_font_montserrat_28
 #endif
 
+// Define fonts using the built-in LVGL fonts
+#ifndef LV_FONT_MONTSERRAT_MEDIUM_48
+#define LV_FONT_MONTSERRAT_MEDIUM_48 &lv_font_montserrat_48
+#endif
+
+
 #ifndef LV_FONT_MONTSERRAT_MEDIUM_16
 #define LV_FONT_MONTSERRAT_MEDIUM_16 &lv_font_montserrat_16
 #endif
@@ -276,7 +343,7 @@ static void setup_scr_screen(lv_obj_t * scr, lv_style_t * style_default)
   lv_obj_set_style_border_width(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
   lv_obj_set_style_radius(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
   lv_obj_set_style_text_color(screen_label_1, lv_color_black(), LV_PART_MAIN|LV_STATE_DEFAULT);
-  lv_obj_set_style_text_font(screen_label_1, LV_FONT_MONTSERRAT_MEDIUM_29, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_font(screen_label_1, LV_FONT_MONTSERRAT_MEDIUM_48, LV_PART_MAIN|LV_STATE_DEFAULT);
   lv_obj_set_style_text_opa(screen_label_1, 255, LV_PART_MAIN|LV_STATE_DEFAULT);
   lv_obj_set_style_text_letter_space(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
   lv_obj_set_style_text_line_space(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
@@ -315,7 +382,7 @@ static void setup_scr_screen(lv_obj_t * scr, lv_style_t * style_default)
   lv_obj_t * screen_label_3 = lv_label_create(scr);
   lv_label_set_text(screen_label_3, "Uptime\n");
   lv_label_set_long_mode(screen_label_3, LV_LABEL_LONG_WRAP);
-  lv_obj_set_pos(screen_label_3, 4, 165);
+  lv_obj_set_pos(screen_label_3, 4, 170);
   lv_obj_set_size(screen_label_3, 122, 30);
 
   // Style for screen_label_3
@@ -338,8 +405,8 @@ static void setup_scr_screen(lv_obj_t * scr, lv_style_t * style_default)
   lv_obj_t * wifi_label = lv_label_create(scr);
   lv_label_set_text(wifi_label, "WiFi: --");
   lv_label_set_long_mode(wifi_label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_pos(wifi_label, 4, 135);
-  lv_obj_set_size(wifi_label, 192, 30);
+  lv_obj_set_pos(wifi_label, 4, 120);
+  lv_obj_set_size(wifi_label, 192, 40);
   
   // Style for wifi_label
   lv_obj_set_style_border_width(wifi_label, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
@@ -349,17 +416,12 @@ static void setup_scr_screen(lv_obj_t * scr, lv_style_t * style_default)
   lv_obj_set_style_text_opa(wifi_label, 255, LV_PART_MAIN|LV_STATE_DEFAULT);
   lv_obj_set_style_text_align(wifi_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN|LV_STATE_DEFAULT);
   
-  // Create battery display label in the top-right corner
-  lv_obj_t * battery_label = lv_label_create(scr);
-  lv_obj_align(battery_label, LV_ALIGN_TOP_RIGHT, -10, 5);
-  lv_obj_set_size(battery_label, 60, 20);
+
   
   // Apply style if provided
   if (style_default != nullptr) {
-    lv_obj_add_style(battery_label, style_default, 0);
     lv_obj_add_style(wifi_label, style_default, 0);
   }
-  lv_obj_set_style_text_color(battery_label, lv_color_black(), LV_PART_MAIN);
   
   // Set the initial text (it will be updated in the loop)
   float voltage = BatteryDisplay::getInstance()->getVoltage();
@@ -368,7 +430,7 @@ static void setup_scr_screen(lv_obj_t * scr, lv_style_t * style_default)
   int voltsDec = (int)((voltage - voltsInt) * 100);
   snprintf(buffer, sizeof(buffer), "%d.%02dV", voltsInt, voltsDec);
   Serial.printf("Initial battery: %s (raw: %.2f)\n", buffer, voltage);
-  lv_label_set_text(battery_label, buffer);
+  lv_label_set_text(screen_label_1, buffer);
   
   // Store both labels in the screen's user data for easy access
   struct {
@@ -377,7 +439,6 @@ static void setup_scr_screen(lv_obj_t * scr, lv_style_t * style_default)
   } *labels = (decltype(labels))lv_mem_alloc(sizeof(*labels));
   
   if (labels) {
-    labels->battery = battery_label;
     labels->wifi = wifi_label;
     lv_obj_set_user_data(scr, labels);
   }
@@ -483,6 +544,7 @@ void setup()
   disp_drv.antialiasing = 1;      // Enable antialiasing for better dithering
   disp_drv.full_refresh = 0;      // Use partial refresh mode for better animation
   
+
   // Register the display
   lv_disp_t * disp = lv_disp_drv_register(&disp_drv);
   

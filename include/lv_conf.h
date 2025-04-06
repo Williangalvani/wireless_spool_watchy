@@ -12,7 +12,7 @@
 /*====================
    COLOR SETTINGS
  *====================*/
-
+#define LV_REFR_PERIOD 1000
 /*Color depth: 8 (8 bits per pixel for grayscale)*/
 #define LV_COLOR_DEPTH 8
 
@@ -109,7 +109,7 @@
 #define LV_FONT_MONTSERRAT_42 0
 #define LV_FONT_MONTSERRAT_44 0
 #define LV_FONT_MONTSERRAT_46 0
-#define LV_FONT_MONTSERRAT_48 0
+#define LV_FONT_MONTSERRAT_48 1
 
 /*--END OF LV_CONF_H--*/
 #endif 
