@@ -10,6 +10,9 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <exception>
+#include "ui/battery_display.h"
+
+// No need for separate include, lvgl.h already includes what we need
 
 // Include different headers based on environment
 #if defined(ARDUINO)
@@ -37,17 +40,11 @@
   #define WIFI_SSID "Pão de Batata"
   #define WIFI_PASSWORD "bananaamassadinha"
   #define OTA_HOSTNAME "watchy-lvgl"
-  
-  // Watchy battery monitoring configuration
-  #define BATTERY_PIN 34        // ADC pin connected to battery
-  #define BATTERY_DIVIDER_RATIO 2.0f  // Voltage divider ratio (typical for Watchy)
-  #define ADC_REFERENCE_VOLTAGE 3.3f  // ESP32 reference voltage
-  #define ADC_RESOLUTION        4095  // 12-bit ADC resolution
-  #define BATTERY_SAMPLES       10    // Number of samples to average
 #endif
 
 // Define a default font explicitly for LVGL to use
-LV_FONT_DECLARE(lv_font_montserrat_14);
+// We don't need to redeclare these, they're in lv_font.h already included via lvgl.h
+// Just using them directly
 
 // Buffer size calculation for the display
 const uint32_t lvScreenWidth = DISPLAY_WIDTH;
@@ -71,45 +68,6 @@ GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> display(
 // LVGL display driver related objects
 static lv_disp_draw_buf_t draw_buf; // Buffer for drawing
 static lv_disp_drv_t disp_drv;      // Display driver
-
-// Battery voltage label object
-static lv_obj_t *battery_label = NULL;
-static float battery_voltage = 0.0f;
-
-// Function to read battery voltage
-float getBatteryVoltage() {
-  uint32_t adcValue = 0;
-  
-  // Take multiple samples and average them
-  for (int i = 0; i < BATTERY_SAMPLES; i++) {
-    adcValue += analogRead(BATTERY_PIN);
-    delay(10);
-  }
-  adcValue /= BATTERY_SAMPLES;
-  
-  // Convert ADC value to voltage
-  float voltage = (adcValue / (float)ADC_RESOLUTION) * ADC_REFERENCE_VOLTAGE;
-  
-  // Apply voltage divider ratio
-  voltage *= BATTERY_DIVIDER_RATIO;
-  
-  return voltage;
-}
-
-// Update the battery voltage display
-void updateBatteryDisplay() {
-  if (battery_label != NULL) {
-    // Read battery voltage
-    battery_voltage = getBatteryVoltage();
-    
-    // Format voltage string
-    char voltage_str[16];
-    snprintf(voltage_str, sizeof(voltage_str), "Batt: %.2fV", battery_voltage);
-    
-    // Update label text
-    lv_label_set_text(battery_label, voltage_str);
-  }
-}
 
 // Temporary buffer for error diffusion dithering (holds grayscale values)
 uint8_t *ditherBuffer = NULL;
@@ -272,7 +230,6 @@ void setupOTA() {
   ArduinoOTA.begin();
   Serial.println("OTA setup complete");
 }
-
 #endif
 
 // Forward declarations for HAL functions
@@ -286,105 +243,137 @@ void hal_cleanup(void);
 }
 #endif
 
+// Define fonts using the built-in LVGL fonts
+#ifndef LV_FONT_MONTSERRAT_MEDIUM_29
+#define LV_FONT_MONTSERRAT_MEDIUM_29 &lv_font_montserrat_28
+#endif
+
+#ifndef LV_FONT_MONTSERRAT_MEDIUM_16
+#define LV_FONT_MONTSERRAT_MEDIUM_16 &lv_font_montserrat_16
+#endif
+
 /**
- * Create a grayscale demonstration UI
+ * Create the screen UI as specified
  * This function is used by both the Arduino and emulator environments
  */
-static void create_grayscale_demo_ui(lv_obj_t * scr, lv_style_t * style_default)
+static void setup_scr_screen(lv_obj_t * scr, lv_style_t * style_default)
 {
   // Set screen background to white
-  lv_obj_set_style_bg_color(scr, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+  lv_obj_set_size(scr, 200, 200);
+  lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_bg_opa(scr, 255, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_color(scr, lv_color_white(), LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_grad_dir(scr, LV_GRAD_DIR_NONE, LV_PART_MAIN|LV_STATE_DEFAULT);
   
-  // Create a title
-  lv_obj_t * title = lv_label_create(scr);
-  if (style_default != NULL) {
-    lv_obj_add_style(title, style_default, 0);
-  }
-  lv_label_set_text(title, "Grayscale Demo");
-  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+  // Create "Spool" label
+  lv_obj_t * screen_label_1 = lv_label_create(scr);
+  lv_label_set_text(screen_label_1, "Spool");
+  lv_label_set_long_mode(screen_label_1, LV_LABEL_LONG_WRAP);
+  lv_obj_set_pos(screen_label_1, 4, 14);
+  lv_obj_set_size(screen_label_1, 192, 42);
+
+  // Style for screen_label_1
+  lv_obj_set_style_border_width(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_radius(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_color(screen_label_1, lv_color_black(), LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_font(screen_label_1, LV_FONT_MONTSERRAT_MEDIUM_29, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_opa(screen_label_1, 255, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_letter_space(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_line_space(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_align(screen_label_1, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_opa(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_top(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_right(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_bottom(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_left(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_shadow_width(screen_label_1, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+
+  // Create "Vehicle" label
+  lv_obj_t * screen_label_2 = lv_label_create(scr);
+  lv_label_set_text(screen_label_2, "Vehicle\n");
+  lv_label_set_long_mode(screen_label_2, LV_LABEL_LONG_WRAP);
+  lv_obj_set_pos(screen_label_2, 4, 56);
+  lv_obj_set_size(screen_label_2, 194, 29);
+
+  // Style for screen_label_2
+  lv_obj_set_style_border_width(screen_label_2, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_radius(screen_label_2, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_color(screen_label_2, lv_color_black(), LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_font(screen_label_2, LV_FONT_MONTSERRAT_MEDIUM_29, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_opa(screen_label_2, 255, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_letter_space(screen_label_2, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_line_space(screen_label_2, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_align(screen_label_2, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_opa(screen_label_2, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_top(screen_label_2, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_right(screen_label_2, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_bottom(screen_label_2, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_left(screen_label_2, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_shadow_width(screen_label_2, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+
+  // Create "Uptime" label
+  lv_obj_t * screen_label_3 = lv_label_create(scr);
+  lv_label_set_text(screen_label_3, "Uptime\n");
+  lv_label_set_long_mode(screen_label_3, LV_LABEL_LONG_WRAP);
+  lv_obj_set_pos(screen_label_3, 4, 165);
+  lv_obj_set_size(screen_label_3, 122, 30);
+
+  // Style for screen_label_3
+  lv_obj_set_style_border_width(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_radius(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_color(screen_label_3, lv_color_black(), LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_font(screen_label_3, LV_FONT_MONTSERRAT_MEDIUM_16, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_opa(screen_label_3, 255, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_letter_space(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_line_space(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_align(screen_label_3, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_opa(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_top(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_right(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_bottom(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_pad_left(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_shadow_width(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
   
-  // Create a group for navigation
-  lv_group_t * g = lv_group_create();
+  // Create battery display label in the top-right corner
+  lv_obj_t * battery_label = lv_label_create(scr);
+  lv_obj_align(battery_label, LV_ALIGN_TOP_RIGHT, -5, 5);
   
-  // Creating rectangles with different opacities for grayscale demonstration
-  for (int i = 0; i < 5; i++) {
-    lv_obj_t * rect = lv_obj_create(scr);
-    lv_obj_set_size(rect, 150, 20);
-    lv_obj_align(rect, LV_ALIGN_TOP_MID, 0, 40 + i * 25);
-    
-    // Set opacity from 50 to 250 (20% to 100%)
-    uint8_t opacity = 50 + i * 50;
-    lv_obj_set_style_bg_color(rect, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(rect, opacity, 0);
-    lv_obj_set_style_border_width(rect, 1, 0);
-    lv_obj_set_style_border_color(rect, lv_color_black(), 0);
-    
-    // Add rectangle to navigation group
-    lv_group_add_obj(g, rect);
-    
-    // Add a label with the opacity percentage
-    lv_obj_t * label = lv_label_create(rect);
-    if (style_default != NULL) {
-      lv_obj_add_style(label, style_default, 0);
-    }
-    char buf[20];
-    snprintf(buf, sizeof(buf), "%d%%", opacity * 100 / 255);
-    lv_label_set_text(label, buf);
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-  }
-  
-  // Add a circle with gradient for demonstration
-  lv_obj_t * circle = lv_obj_create(scr);
-  lv_obj_remove_style_all(circle);
-  lv_obj_set_size(circle, 80, 80);
-  lv_obj_set_style_radius(circle, 40, 0);
-  lv_obj_align(circle, LV_ALIGN_BOTTOM_MID, 0, -20);
-  
-  // Set background color to black
-  lv_obj_set_style_bg_color(circle, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(circle, LV_OPA_COVER, 0);
-  
-  // Create and apply a horizontal gradient from black to white
-  lv_obj_set_style_bg_grad_color(circle, lv_color_white(), 0);
-  lv_obj_set_style_bg_grad_dir(circle, LV_GRAD_DIR_HOR, 0);
-  
-  // Add the circle to the navigation group
-  lv_group_add_obj(g, circle);
-  
-  #if defined(ARDUINO)
-  // Add battery voltage label
-  battery_label = lv_label_create(scr);
-  lv_label_set_text(battery_label, "Batt: ?.??V");
-  lv_obj_align(battery_label, LV_ALIGN_TOP_LEFT, 10, 22);
-  lv_obj_set_style_text_color(battery_label, lv_color_black(), 0);
-  if (style_default != NULL) {
+  // Apply style if provided
+  if (style_default != nullptr) {
     lv_obj_add_style(battery_label, style_default, 0);
   }
-  #endif
+  lv_obj_set_style_text_color(battery_label, lv_color_black(), LV_PART_MAIN);
   
-  // Return the navigation group so both environments can use it
-  lv_group_set_default(g);
+  // Set the initial text (it will be updated in the loop)
+  float voltage = BatteryDisplay::getInstance()->getVoltage();
+  char buffer[16];
+  lv_snprintf(buffer, sizeof(buffer), "%.2fV", voltage);
+  lv_label_set_text(battery_label, buffer);
   
-  #if defined(ARDUINO)
-
-  #else
-  // For emulator, connect the keyboard input device to our group
-  lv_indev_t * kbd_indev = lv_indev_get_next(NULL);
-  while(kbd_indev) {
-    if(lv_indev_get_type(kbd_indev) == LV_INDEV_TYPE_KEYPAD) {
-      lv_indev_set_group(kbd_indev, g);
-      break;
-    }
-    kbd_indev = lv_indev_get_next(kbd_indev);
-  }
-  #endif
+  // Save the battery label as a user_data in the screen for easy access
+  lv_obj_set_user_data(scr, battery_label);
+  
+  // Update layout
+  lv_obj_update_layout(scr);
 }
 
+// Function to update the battery display
+static void update_battery_display() {
+  lv_obj_t* scr = lv_scr_act();
+  lv_obj_t* battery_label = (lv_obj_t*)lv_obj_get_user_data(scr);
+  
+  if (battery_label != nullptr && BatteryDisplay::getInstance()->shouldUpdate()) {
+    float voltage = BatteryDisplay::getInstance()->getVoltage();
+    char buffer[16];
+    lv_snprintf(buffer, sizeof(buffer), "%.2fV", voltage);
+    lv_label_set_text(battery_label, buffer);
+  }
+}
+
+#if defined(ARDUINO)
+// Arduino setup function
 void setup()
 {
-  #if defined(ARDUINO)
   Serial.begin(115200);
   Serial.println("Starting Watchy LVGL application");
 
@@ -445,10 +434,6 @@ void setup()
   
   // Set up OTA update functionality
   setupOTA();
-  #else
-  // For the emulator, the display is already initialized in hal_setup()
-  lv_disp_t * disp = lv_disp_get_default();
-  #endif
   
   // Set the theme to monochrome with explicit font
   lv_theme_t * theme = lv_theme_mono_init(disp, false, &lv_font_montserrat_14);
@@ -459,19 +444,18 @@ void setup()
   lv_style_init(&style_default);
   lv_style_set_text_font(&style_default, &lv_font_montserrat_14);
   
-  // Create a screen with gradient demonstration
+  // Create a screen with the new UI
   lv_obj_t * scr = lv_obj_create(NULL);
   lv_obj_add_style(scr, &style_default, 0); // Apply the default style to the screen
   
-  // Create the grayscale demo UI
-  create_grayscale_demo_ui(scr, &style_default);
+  // Create the new screen UI
+  setup_scr_screen(scr, &style_default);
   
   // Set the screen
   lv_scr_load(scr);
-  
-  // Serial.println("Setup complete");
 }
 
+// Arduino loop function
 void loop() 
 {
   // Update LVGL system tick
@@ -480,23 +464,17 @@ void loop()
   // Run the LVGL task handler
   lv_task_handler();
   
-  #if defined(ARDUINO)
-  // Update battery display (not too frequently to avoid display flicker)
-  static uint32_t lastBatteryUpdate = 0;
-  if (millis() - lastBatteryUpdate > 30000) { // Update every 30 seconds
-    updateBatteryDisplay();
-    lastBatteryUpdate = millis();
-  }
+  // Update battery display
+  update_battery_display();
   
   // Handle OTA updates
   ArduinoOTA.handle();
   
   // Add a small delay to not overload the CPU
   delay(5);
-  #endif
 }
 
-#if !defined(ARDUINO)
+#else
 // Main function for SDL emulator environment
 int main(int argc, char *argv[]) {
   // Initialize LVGL first
@@ -505,7 +483,7 @@ int main(int argc, char *argv[]) {
   // Initialize the HAL for SDL - this sets up SDL and the display driver
   hal_setup();
   
-  // Create a screen with gradient demonstration (same as in Arduino setup)
+  // Create a screen with the new UI
   lv_obj_t * scr = lv_obj_create(NULL);
   
   // Set the theme to monochrome with explicit font
@@ -519,15 +497,23 @@ int main(int argc, char *argv[]) {
   lv_style_set_text_font(&style_default, &lv_font_montserrat_14);
   lv_obj_add_style(scr, &style_default, 0);
   
-  // Create the grayscale demo UI using the shared function
-  create_grayscale_demo_ui(scr, &style_default);
+  // Create the new screen UI using the shared function
+  setup_scr_screen(scr, &style_default);
   
   // Load the screen
   lv_scr_load(scr);
   
   // Main loop for the emulator
   while(1) {
+    // Run the HAL loop (handles SDL events and updates)
     hal_loop();
+    
+    // LVGL timing and task handling
+    lv_tick_inc(5);
+    lv_task_handler();
+    
+    // Update battery display
+    update_battery_display();
     
     // Add a small delay
     usleep(5000);
