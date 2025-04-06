@@ -334,24 +334,53 @@ static void setup_scr_screen(lv_obj_t * scr, lv_style_t * style_default)
   lv_obj_set_style_pad_left(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
   lv_obj_set_style_shadow_width(screen_label_3, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
   
+  // Create WiFi status label
+  lv_obj_t * wifi_label = lv_label_create(scr);
+  lv_label_set_text(wifi_label, "WiFi: --");
+  lv_label_set_long_mode(wifi_label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_pos(wifi_label, 4, 135);
+  lv_obj_set_size(wifi_label, 192, 30);
+  
+  // Style for wifi_label
+  lv_obj_set_style_border_width(wifi_label, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_radius(wifi_label, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_color(wifi_label, lv_color_black(), LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_font(wifi_label, LV_FONT_MONTSERRAT_MEDIUM_16, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_opa(wifi_label, 255, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_align(wifi_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN|LV_STATE_DEFAULT);
+  
   // Create battery display label in the top-right corner
   lv_obj_t * battery_label = lv_label_create(scr);
-  lv_obj_align(battery_label, LV_ALIGN_TOP_RIGHT, -5, 5);
+  lv_obj_align(battery_label, LV_ALIGN_TOP_RIGHT, -10, 5);
+  lv_obj_set_size(battery_label, 60, 20);
   
   // Apply style if provided
   if (style_default != nullptr) {
     lv_obj_add_style(battery_label, style_default, 0);
+    lv_obj_add_style(wifi_label, style_default, 0);
   }
   lv_obj_set_style_text_color(battery_label, lv_color_black(), LV_PART_MAIN);
   
   // Set the initial text (it will be updated in the loop)
   float voltage = BatteryDisplay::getInstance()->getVoltage();
   char buffer[16];
-  lv_snprintf(buffer, sizeof(buffer), "%.2fV", voltage);
+  int voltsInt = (int)voltage;
+  int voltsDec = (int)((voltage - voltsInt) * 100);
+  snprintf(buffer, sizeof(buffer), "%d.%02dV", voltsInt, voltsDec);
+  Serial.printf("Initial battery: %s (raw: %.2f)\n", buffer, voltage);
   lv_label_set_text(battery_label, buffer);
   
-  // Save the battery label as a user_data in the screen for easy access
-  lv_obj_set_user_data(scr, battery_label);
+  // Store both labels in the screen's user data for easy access
+  struct {
+    lv_obj_t* battery;
+    lv_obj_t* wifi;
+  } *labels = (decltype(labels))lv_mem_alloc(sizeof(*labels));
+  
+  if (labels) {
+    labels->battery = battery_label;
+    labels->wifi = wifi_label;
+    lv_obj_set_user_data(scr, labels);
+  }
   
   // Update layout
   lv_obj_update_layout(scr);
@@ -360,13 +389,38 @@ static void setup_scr_screen(lv_obj_t * scr, lv_style_t * style_default)
 // Function to update the battery display
 static void update_battery_display() {
   lv_obj_t* scr = lv_scr_act();
-  lv_obj_t* battery_label = (lv_obj_t*)lv_obj_get_user_data(scr);
+  struct {
+    lv_obj_t* battery;
+    lv_obj_t* wifi;
+  } *labels = (decltype(labels))lv_obj_get_user_data(scr);
   
-  if (battery_label != nullptr && BatteryDisplay::getInstance()->shouldUpdate()) {
+  if (labels && labels->battery && BatteryDisplay::getInstance()->shouldUpdate()) {
     float voltage = BatteryDisplay::getInstance()->getVoltage();
     char buffer[16];
-    lv_snprintf(buffer, sizeof(buffer), "%.2fV", voltage);
-    lv_label_set_text(battery_label, buffer);
+    int voltsInt = (int)voltage;
+    int voltsDec = (int)((voltage - voltsInt) * 100);
+    snprintf(buffer, sizeof(buffer), "%d.%02dV", voltsInt, voltsDec);
+    Serial.printf("Battery voltage: %s (raw: %.2f)\n", buffer, voltage);
+    lv_label_set_text(labels->battery, buffer);
+  }
+}
+
+// Function to update WiFi status display
+static void update_wifi_display() {
+  lv_obj_t* scr = lv_scr_act();
+  struct {
+    lv_obj_t* battery;
+    lv_obj_t* wifi;
+  } *labels = (decltype(labels))lv_obj_get_user_data(scr);
+  
+  if (labels && labels->wifi) {
+    char buffer[64];
+    if (WiFi.status() == WL_CONNECTED) {
+      lv_snprintf(buffer, sizeof(buffer), "WiFi: Connected\nIP: %s", WiFi.localIP().toString().c_str());
+    } else {
+      lv_snprintf(buffer, sizeof(buffer), "WiFi: Disconnected");
+    }
+    lv_label_set_text(labels->wifi, buffer);
   }
 }
 
@@ -466,6 +520,9 @@ void loop()
   
   // Update battery display
   update_battery_display();
+  
+  // Update WiFi display
+  update_wifi_display();
   
   // Handle OTA updates
   ArduinoOTA.handle();
