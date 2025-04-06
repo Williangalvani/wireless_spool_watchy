@@ -158,32 +158,6 @@ void cleanup() {
     ditherBuffer = NULL;
   }
 }
-
-// Button read callback - simplified
-static void read_encoder(lv_indev_drv_t * drv, lv_indev_data_t * data)
-{
-  // Default state
-  data->state = LV_INDEV_STATE_RELEASED;
-  data->key = 0;
-  
-  // Check buttons with debouncing
-  if(digitalRead(BUTTON_MENU) == LOW) {
-    data->key = LV_KEY_ENTER;
-    data->state = LV_INDEV_STATE_PRESSED;
-  }
-  else if(digitalRead(BUTTON_BACK) == LOW) {
-    data->key = LV_KEY_ESC;
-    data->state = LV_INDEV_STATE_PRESSED;
-  }
-  else if(digitalRead(BUTTON_UP) == LOW) {
-    data->key = LV_KEY_UP;
-    data->state = LV_INDEV_STATE_PRESSED;
-  }
-  else if(digitalRead(BUTTON_DOWN) == LOW) {
-    data->key = LV_KEY_DOWN;
-    data->state = LV_INDEV_STATE_PRESSED;
-  }
-}
 #endif
 
 // Forward declarations for HAL functions
@@ -295,12 +269,7 @@ static void create_grayscale_demo_ui(lv_obj_t * scr, lv_style_t * style_default)
   lv_group_set_default(g);
   
   #if defined(ARDUINO)
-  // Initialize keypad input and connect to navigation group
-  lv_indev_drv_init(&indev_drv);
-  indev_drv.type = LV_INDEV_TYPE_KEYPAD;
-  indev_drv.read_cb = read_encoder;
-  lv_indev_t * indev = lv_indev_drv_register(&indev_drv);
-  lv_indev_set_group(indev, g);
+
   #else
   // For emulator, connect the keyboard input device to our group
   lv_indev_t * kbd_indev = lv_indev_get_next(NULL);
