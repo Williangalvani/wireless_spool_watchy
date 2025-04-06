@@ -23,9 +23,9 @@
   // SDL emulator environment
   #include "../hal/sdl2/app_hal.h"
   
-  // Define the same dimensions as the Watchy for the emulator
-  #define DISPLAY_WIDTH 200
-  #define DISPLAY_HEIGHT 200
+  // Define the same dimensions as the SDL HAL to prevent segfault
+  #define DISPLAY_WIDTH 480
+  #define DISPLAY_HEIGHT 320
   #define DISPLAY_BITS_PER_PIXEL 1
 #endif
 
@@ -35,7 +35,7 @@ LV_FONT_DECLARE(lv_font_montserrat_14);
 // Buffer size calculation for the display
 const uint32_t lvScreenWidth = DISPLAY_WIDTH;
 const uint32_t lvScreenHeight = DISPLAY_HEIGHT;
-const uint32_t lvBufferSize = lvScreenWidth * lvScreenHeight / 10; // 1/10 of screen for drawing buffer
+const uint32_t lvBufferSize = (lvScreenWidth * lvScreenHeight / 10); // 1/10 of screen for drawing buffer
 
 // Use same buffer settings for both Arduino and emulator
 static lv_color_t lvBuffer[lvBufferSize]; // Buffer for LVGL - using color_t for standard LVGL format
@@ -226,7 +226,7 @@ static void create_ui(lv_obj_t * parent)
 
 void setup()
 {
-#if defined(ARDUINO)
+  #if defined(ARDUINO)
   Serial.begin(115200);
   Serial.println("Starting Watchy LVGL application");
 
@@ -262,13 +262,11 @@ void setup()
   // Initialize LVGL
   lv_init();
   Serial.println("LVGL initialized");
-  
+
   // Initialize LVGL drawing buffer with standard format
-  lv_disp_draw_buf_t draw_buf;
   lv_disp_draw_buf_init(&draw_buf, lvBuffer, NULL, lvBufferSize);
   
   // Initialize the display driver
-  lv_disp_drv_t disp_drv;
   lv_disp_drv_init(&disp_drv);
   disp_drv.hor_res = lvScreenWidth;
   disp_drv.ver_res = lvScreenHeight;
@@ -283,6 +281,10 @@ void setup()
   
   // Register the display
   lv_disp_t * disp = lv_disp_drv_register(&disp_drv);
+  #else
+  // For the emulator, the display is already initialized in hal_setup()
+  lv_disp_t * disp = lv_disp_get_default();
+  #endif
   
   // Set the theme to monochrome with explicit font
   lv_theme_t * theme = lv_theme_mono_init(disp, false, &lv_font_montserrat_14);
@@ -301,100 +303,137 @@ void setup()
   lv_obj_set_style_bg_color(scr, lv_color_white(), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   
-  // Create the UI
-  create_ui(scr);
+  // Create a title
+  lv_obj_t * title = lv_label_create(scr);
+  lv_obj_add_style(title, &style_default, 0);
+  lv_label_set_text(title, "Grayscale Demo");
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+  
+  // Create a group for navigation
+  lv_group_t * g = lv_group_create();
+  
+  // Creating rectangles with different opacities for grayscale demonstration
+  for (int i = 0; i < 5; i++) {
+    lv_obj_t * rect = lv_obj_create(scr);
+    lv_obj_set_size(rect, 150, 20);
+    lv_obj_align(rect, LV_ALIGN_TOP_MID, 0, 40 + i * 25);
+    
+    // Set opacity from 50 to 250 (20% to 100%)
+    uint8_t opacity = 50 + i * 50;
+    lv_obj_set_style_bg_color(rect, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(rect, opacity, 0);
+    lv_obj_set_style_border_width(rect, 1, 0);
+    lv_obj_set_style_border_color(rect, lv_color_black(), 0);
+    
+    // Add rectangle to navigation group
+    lv_group_add_obj(g, rect);
+    
+    // Add a label with the opacity percentage
+    lv_obj_t * label = lv_label_create(rect);
+    lv_obj_add_style(label, &style_default, 0);
+    char buf[20];
+    snprintf(buf, sizeof(buf), "%d%%", opacity * 100 / 255);
+    lv_label_set_text(label, buf);
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+  }
+  
+  // Add a circle with gradient for demonstration
+  lv_obj_t * circle = lv_obj_create(scr);
+  lv_obj_remove_style_all(circle);
+  lv_obj_set_size(circle, 80, 80);
+  lv_obj_set_style_radius(circle, 40, 0);
+  lv_obj_align(circle, LV_ALIGN_BOTTOM_MID, 0, -20);
+  
+  // Create a gradient from black to white
+  lv_grad_dsc_t grad;
+  grad.dir = LV_GRAD_DIR_HOR;
+  grad.stops_count = 2;
+  grad.stops[0].color = lv_color_black();
+  grad.stops[0].frac = 0;
+  grad.stops[1].color = lv_color_white();
+  grad.stops[1].frac = 255;
+  
+  // Apply the gradient
+  lv_obj_set_style_bg_grad(circle, &grad, 0);
+  lv_obj_set_style_bg_grad_dir(circle, LV_GRAD_DIR_HOR, 0);
+  lv_obj_set_style_bg_main_stop(circle, 0, 0);
+  lv_obj_set_style_bg_grad_stop(circle, 255, 0);
+  lv_obj_set_style_bg_color(circle, lv_color_black(), 0);
+  lv_obj_set_style_bg_grad_color(circle, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(circle, LV_OPA_COVER, 0);
+  
+  // Add the circle to the navigation group
+  lv_group_add_obj(g, circle);
+  
+  // Initialize keypad input and connect to navigation group
+  #if defined(ARDUINO)
+  lv_indev_drv_init(&indev_drv);
+  indev_drv.type = LV_INDEV_TYPE_KEYPAD;
+  indev_drv.read_cb = read_encoder;
+  lv_indev_t * indev = lv_indev_drv_register(&indev_drv);
+  lv_indev_set_group(indev, g);
+  #else
+  // For emulator, connect the keyboard input device to our group
+  lv_indev_t * kbd_indev = lv_indev_get_next(NULL);
+  while(kbd_indev) {
+    if(lv_indev_get_type(kbd_indev) == LV_INDEV_TYPE_KEYPAD) {
+      lv_indev_set_group(kbd_indev, g);
+      break;
+    }
+    kbd_indev = lv_indev_get_next(kbd_indev);
+  }
+  #endif
+  
+  // Set the default group
+  lv_group_set_default(g);
   
   // Set the screen
   lv_scr_load(scr);
   
-  Serial.println("Setup complete");
-#else
-  // Initialize LVGL first
-  printf("Initializing LVGL...\n");
-  lv_init();
-  
-  // Initialize HAL after LVGL
-  printf("Initializing HAL...\n");
-  hal_setup();
-  
-  // Create simple UI
-  printf("Creating UI...\n");
-  lv_obj_t * scr = lv_scr_act();
-  create_ui(scr);
-  
-  printf("Entering main loop...\n");
-  // Main loop with proper error handling
-  try {
-    while(1) {
-      hal_loop();  // This already calls lv_task_handler()
-      usleep(5 * 1000); // 5ms delay
-    }
-  } 
-  catch (const std::exception& e) {
-    printf("Error in main loop: %s\n", e.what());
-  }
-  catch (...) {
-    printf("Unknown error in main loop\n");
-  }
-  
-  // Ensure proper cleanup
-  printf("Exiting application, cleaning up...\n");
-  hal_cleanup();
-#endif
+  // Serial.println("Setup complete");
 }
 
 void loop() 
 {
-#if defined(ARDUINO)
-  // Process LVGL tasks periodically
+  // Update LVGL system tick
+  lv_tick_inc(5);
+  
+  // Run the LVGL task handler
   lv_task_handler();
-  delay(5);
-#else
-  // The emulator's main loop is handled in hal_loop()
-  hal_loop();
-#endif
+  
+  // Add a small delay to not overload the CPU
+  #if defined(ARDUINO)
+    delay(5);
+  #endif
 }
 
-#if defined(ARDUINO)
-// Arduino environment uses setup() and loop() functions
-#else
-// Main function for SDL environment
-int main(void)
-{
-  printf("Starting LVGL application with SDL emulator...\n");
-  
+#if !defined(ARDUINO)
+// Main function for SDL emulator environment
+int main(int argc, char *argv[]) {
   // Initialize LVGL first
-  printf("Initializing LVGL...\n");
   lv_init();
   
-  // Initialize HAL after LVGL
-  printf("Initializing HAL...\n");
+  // Initialize the HAL for SDL - this sets up SDL and the display driver
   hal_setup();
   
-  // Create simple UI
-  printf("Creating UI...\n");
-  lv_obj_t * scr = lv_scr_act();
+  // Create a screen for our demo
+  lv_obj_t * scr = lv_obj_create(NULL);
+  lv_scr_load(scr);
+  
+  // Create a simple UI
   create_ui(scr);
   
-  printf("Entering main loop...\n");
-  // Main loop with proper error handling
-  try {
-    while(1) {
-      hal_loop();  // This already calls lv_task_handler()
-      usleep(5 * 1000); // 5ms delay
-    }
-  } 
-  catch (const std::exception& e) {
-    printf("Error in main loop: %s\n", e.what());
-  }
-  catch (...) {
-    printf("Unknown error in main loop\n");
+  // Main loop for the emulator
+  while(1) {
+    hal_loop();
+    
+    // Add a small delay
+    usleep(5000);
   }
   
-  // Ensure proper cleanup
-  printf("Exiting application, cleaning up...\n");
+  // Cleanup before exiting
   hal_cleanup();
-  
   return 0;
 }
 #endif
