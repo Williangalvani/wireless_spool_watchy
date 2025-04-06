@@ -280,23 +280,13 @@ static void create_grayscale_demo_ui(lv_obj_t * scr, lv_style_t * style_default)
   lv_obj_set_style_radius(circle, 40, 0);
   lv_obj_align(circle, LV_ALIGN_BOTTOM_MID, 0, -20);
   
-  // Create a gradient from black to white
-  lv_grad_dsc_t grad;
-  grad.dir = LV_GRAD_DIR_HOR;
-  grad.stops_count = 2;
-  grad.stops[0].color = lv_color_black();
-  grad.stops[0].frac = 0;
-  grad.stops[1].color = lv_color_white();
-  grad.stops[1].frac = 255;
-  
-  // Apply the gradient
-  lv_obj_set_style_bg_grad(circle, &grad, 0);
-  lv_obj_set_style_bg_grad_dir(circle, LV_GRAD_DIR_HOR, 0);
-  lv_obj_set_style_bg_main_stop(circle, 0, 0);
-  lv_obj_set_style_bg_grad_stop(circle, 255, 0);
+  // Set background color to black
   lv_obj_set_style_bg_color(circle, lv_color_black(), 0);
-  lv_obj_set_style_bg_grad_color(circle, lv_color_white(), 0);
   lv_obj_set_style_bg_opa(circle, LV_OPA_COVER, 0);
+  
+  // Create and apply a horizontal gradient from black to white
+  lv_obj_set_style_bg_grad_color(circle, lv_color_white(), 0);
+  lv_obj_set_style_bg_grad_dir(circle, LV_GRAD_DIR_HOR, 0);
   
   // Add the circle to the navigation group
   lv_group_add_obj(g, circle);

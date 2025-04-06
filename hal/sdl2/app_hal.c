@@ -11,8 +11,8 @@ void hal_loop(void);
 void hal_cleanup(void);
 
 // Display dimensions
-#define DISPLAY_WIDTH 480
-#define DISPLAY_HEIGHT 320
+#define DISPLAY_WIDTH 200
+#define DISPLAY_HEIGHT 200
 #define SDL_HOR_RES DISPLAY_WIDTH
 #define SDL_VER_RES DISPLAY_HEIGHT
 
