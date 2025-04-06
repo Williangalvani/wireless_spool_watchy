@@ -88,7 +88,7 @@ static void my_disp_flush(lv_disp_drv_t * disp, const lv_area_t * area, lv_color
   uint32_t w = (area->x2 - area->x1 + 1);
   uint32_t h = (area->y2 - area->y1 + 1);
   
-  Serial.printf("Flushing area: x1=%d, y1=%d, x2=%d, y2=%d\n", area->x1, area->y1, area->x2, area->y2);
+  // Serial.printf("Flushing area: x1=%d, y1=%d, x2=%d, y2=%d\n", area->x1, area->y1, area->x2, area->y2);
   
   // Allocate or reallocate the threshold buffer if needed
   if (thresholdBuffer == NULL || disp->hor_res * disp->ver_res != lvScreenWidth * lvScreenHeight) {
@@ -203,7 +203,7 @@ static void my_disp_flush(lv_disp_drv_t * disp, const lv_area_t * area, lv_color
       }
     } while(display.nextPage());
   } else {
-    Serial.println("No changes, skipping display update");
+    // Serial.println("No changes, skipping display update");
   }
   
   // Inform LVGL that the flushing is done
@@ -436,11 +436,38 @@ static void setup_scr_screen(lv_obj_t * scr, lv_style_t * style_default)
   struct {
     lv_obj_t* battery;
     lv_obj_t* wifi;
+    lv_obj_t* mavlink;
   } *labels = (decltype(labels))lv_mem_alloc(sizeof(*labels));
   
   if (labels) {
     labels->wifi = wifi_label;
+    labels->mavlink = NULL;
     lv_obj_set_user_data(scr, labels);
+  }
+  
+  // Create mavlink service label
+  lv_obj_t * mavlink_label = lv_label_create(scr);
+  lv_label_set_text(mavlink_label, "Mavlink: Searching...");
+  lv_label_set_long_mode(mavlink_label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_pos(mavlink_label, 4, 85);
+  lv_obj_set_size(mavlink_label, 192, 30);
+
+  // Style for mavlink_label
+  lv_obj_set_style_border_width(mavlink_label, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_radius(mavlink_label, 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_color(mavlink_label, lv_color_black(), LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_font(mavlink_label, LV_FONT_MONTSERRAT_MEDIUM_16, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_opa(mavlink_label, 255, LV_PART_MAIN|LV_STATE_DEFAULT);
+  lv_obj_set_style_text_align(mavlink_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN|LV_STATE_DEFAULT);
+
+  // Add style if provided
+  if (style_default != nullptr) {
+    lv_obj_add_style(mavlink_label, style_default, 0);
+  }
+
+  // Store the mavlink label in the screen's user data
+  if (labels) {
+    labels->mavlink = mavlink_label;
   }
   
   // Update layout
@@ -453,6 +480,7 @@ static void update_battery_display() {
   struct {
     lv_obj_t* battery;
     lv_obj_t* wifi;
+    lv_obj_t* mavlink;
   } *labels = (decltype(labels))lv_obj_get_user_data(scr);
   
   if (labels && labels->battery && BatteryDisplay::getInstance()->shouldUpdate()) {
@@ -472,6 +500,7 @@ static void update_wifi_display() {
   struct {
     lv_obj_t* battery;
     lv_obj_t* wifi;
+    lv_obj_t* mavlink;
   } *labels = (decltype(labels))lv_obj_get_user_data(scr);
   
   if (labels && labels->wifi) {
@@ -482,6 +511,42 @@ static void update_wifi_display() {
       lv_snprintf(buffer, sizeof(buffer), "WiFi: Disconnected");
     }
     lv_label_set_text(labels->wifi, buffer);
+  }
+}
+
+// Add function to update mavlink service display
+static void update_mavlink_display() {
+  lv_obj_t* scr = lv_scr_act();
+  struct {
+    lv_obj_t* battery;
+    lv_obj_t* wifi;
+    lv_obj_t* mavlink;
+  } *labels = (decltype(labels))lv_obj_get_user_data(scr);
+  
+  if (labels && labels->mavlink) {
+    static uint32_t last_mavlink_check = 0;
+    uint32_t current_time = millis();
+    
+    // Check for mavlink service every 5 seconds
+    if (current_time - last_mavlink_check > 5000) {
+      char buffer[64];
+      bool serviceFound = false;
+
+      // Query mDNS for mavlink service
+      int n = MDNS.queryService("mavlink", "udp");
+      if (n > 0) {
+        // Service found - display the first one
+        lv_snprintf(buffer, sizeof(buffer), "%s", 
+                   MDNS.IP(0).toString().c_str());
+        serviceFound = true;
+      } else {
+        lv_snprintf(buffer, sizeof(buffer), "Mavlink: Not found");
+      }
+      Serial.printf("Mavlink: %d devices, %s ", n, MDNS.IP(0).toString().c_str());
+      
+      lv_label_set_text(labels->mavlink, buffer);
+      last_mavlink_check = current_time;
+    }
   }
 }
 
@@ -586,6 +651,9 @@ void loop()
   // Update WiFi display
   update_wifi_display();
   
+  // Update mavlink service display
+  update_mavlink_display();
+  
   // Handle OTA updates
   ArduinoOTA.handle();
   
@@ -633,6 +701,9 @@ int main(int argc, char *argv[]) {
     
     // Update battery display
     update_battery_display();
+    
+    // Update mavlink service display
+    update_mavlink_display();
     
     // Add a small delay
     usleep(5000);
