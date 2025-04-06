@@ -25,6 +25,7 @@
   #include <WiFi.h>
   #include <ArduinoOTA.h>
   #include <ESPmDNS.h>
+  #include <HTTPClient.h>
 #else
   // SDL emulator environment
   #include "../hal/sdl2/app_hal.h"
@@ -514,6 +515,54 @@ static void update_wifi_display() {
   }
 }
 
+// Function to get battery voltage from Mavlink HTTP API
+float getMavlinkBatteryVoltage(const String& vehicleIP) {
+  float batteryVoltage = -1.0f; // Default value indicating failure
+  
+  if (vehicleIP.length() == 0 || vehicleIP == "Mavlink: Not found") {
+    return batteryVoltage;
+  }
+  
+  #if defined(ARDUINO)
+  HTTPClient http;
+  
+  // Construct the URL for the battery voltage endpoint
+  String url = "http://" + vehicleIP + ":6040/v1/mavlink/vehicles/1/components/1/messages/BATTERY_STATUS/message/voltages/0";
+  
+  Serial.println("Making request to: " + url);
+  http.begin(url);
+  
+  // Set timeout for the request
+  http.setTimeout(5000); // 5 second timeout
+  
+  // Send GET request
+  int httpResponseCode = http.GET();
+  
+  if (httpResponseCode > 0) {
+    Serial.printf("HTTP Response code: %d\n", httpResponseCode);
+    String payload = http.getString();
+    Serial.println("Payload: " + payload);
+    
+    // Parse the plain text number response
+    // No need for JSON parsing since the response is just a number
+    int millivolts = payload.toInt();
+    if (millivolts > 0) {
+      // The API returns millivolts, convert to volts
+      batteryVoltage = millivolts / 1000.0f;
+      Serial.printf("Battery voltage: %.2f V\n", batteryVoltage);
+    } else {
+      Serial.println("Failed to parse voltage value from response");
+    }
+  } else {
+    Serial.printf("HTTP request failed, error: %d\n", httpResponseCode);
+  }
+  
+  http.end();
+  #endif
+  
+  return batteryVoltage;
+}
+
 // Add function to update mavlink service display
 static void update_mavlink_display() {
   lv_obj_t* scr = lv_scr_act();
@@ -529,20 +578,42 @@ static void update_mavlink_display() {
     
     // Check for mavlink service every 5 seconds
     if (current_time - last_mavlink_check > 5000) {
-      char buffer[64];
+      char buffer[128]; // Increased buffer size for IP + voltage
       bool serviceFound = false;
-
+      String vehicleIP = "";
+      
+      #if defined(ARDUINO)
       // Query mDNS for mavlink service
       int n = MDNS.queryService("mavlink", "udp");
       if (n > 0) {
-        // Service found - display the first one
-        lv_snprintf(buffer, sizeof(buffer), "%s", 
-                   MDNS.IP(0).toString().c_str());
+        // Service found - get the IP
+        vehicleIP = MDNS.IP(0).toString();
         serviceFound = true;
+        
+        // Get battery voltage from the vehicle
+        float batteryVoltage = getMavlinkBatteryVoltage(vehicleIP);
+        
+        if (batteryVoltage > 0) {
+          // Display IP and battery voltage
+          lv_snprintf(buffer, sizeof(buffer), "%s\nBatt: %.2fV", 
+                     vehicleIP.c_str(), batteryVoltage);
+        } else {
+          // Could not get battery voltage, just show IP
+          lv_snprintf(buffer, sizeof(buffer), "%s\nBatt: --", 
+                     vehicleIP.c_str());
+        }
+        
+        Serial.printf("Mavlink: %d devices, %s\n", n, vehicleIP.c_str());
       } else {
         lv_snprintf(buffer, sizeof(buffer), "Mavlink: Not found");
       }
-      Serial.printf("Mavlink: %d devices, %s ", n, MDNS.IP(0).toString().c_str());
+      #else
+      // For SDL emulator, show simulated data
+      vehicleIP = "192.168.15.21";
+      float batteryVoltage = 11.6f + (rand() % 10) / 10.0f; // Simulate 11.6-12.5V
+      lv_snprintf(buffer, sizeof(buffer), "%s\nBatt: %.2fV", 
+                 vehicleIP.c_str(), batteryVoltage);
+      #endif
       
       lv_label_set_text(labels->mavlink, buffer);
       last_mavlink_check = current_time;
