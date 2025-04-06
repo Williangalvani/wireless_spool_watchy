@@ -35,7 +35,7 @@
  *====================*/
 
 /*Default display refresh period. LVG will redraw changed areas with this period time*/
-#define LV_DISPLAY_DEF_REFR_PERIOD 30      /*[ms]*/
+#define LV_DISPLAY_DEF_REFR_PERIOD 1000      /*[ms]*/
 
 /*Input device read period in milliseconds*/
 #define LV_INDEV_DEF_READ_PERIOD 30     /*[ms]*/
