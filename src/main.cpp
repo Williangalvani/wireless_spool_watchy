@@ -56,6 +56,9 @@ static lv_disp_draw_buf_t draw_buf; // Buffer for drawing
 static lv_disp_drv_t disp_drv;      // Display driver
 static lv_indev_drv_t indev_drv;    // Input device driver
 
+// Define a default font explicitly for LVGL to use
+LV_FONT_DECLARE(lv_font_montserrat_14);
+
 // Temporary buffer for error diffusion dithering (holds grayscale values)
 uint8_t *ditherBuffer = NULL;
 
@@ -102,7 +105,10 @@ static void my_disp_flush(lv_disp_drv_t * disp, const lv_area_t * area, lv_color
   Serial.printf("Flushing area: x1=%d, y1=%d, x2=%d, y2=%d\n", area->x1, area->y1, area->x2, area->y2);
   
   // Allocate or reallocate the dither buffer if needed
-  if (ditherBuffer == NULL) {
+  if (ditherBuffer == NULL || disp->hor_res * disp->ver_res != lvScreenWidth * lvScreenHeight) {
+    if (ditherBuffer != NULL) 
+      free(ditherBuffer);
+    
     ditherBuffer = (uint8_t*)malloc(w * h);
     if (ditherBuffer == NULL) {
       Serial.println("Failed to allocate dither buffer!");
