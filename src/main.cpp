@@ -19,6 +19,9 @@
   #include <Adafruit_GFX.h>
   #include <Fonts/FreeMonoBold9pt7b.h>
   #include "../hal/esp32/displays/LGFX_WATCHY_EPAPER.hpp"
+  #include <WiFi.h>
+  #include <ArduinoOTA.h>
+  #include <ESPmDNS.h>
 #else
   // SDL emulator environment
   #include "../hal/sdl2/app_hal.h"
@@ -27,6 +30,13 @@
   #define DISPLAY_WIDTH 480
   #define DISPLAY_HEIGHT 320
   #define DISPLAY_BITS_PER_PIXEL 1
+#endif
+
+// WiFi credentials for OTA updates
+#if defined(ARDUINO)
+  #define WIFI_SSID "Pão de Batata"
+  #define WIFI_PASSWORD "bananaamassadinha"
+  #define OTA_HOSTNAME "watchy-lvgl"
 #endif
 
 // Define a default font explicitly for LVGL to use
@@ -158,6 +168,69 @@ void cleanup() {
     ditherBuffer = NULL;
   }
 }
+
+// Setup OTA updates
+void setupOTA() {
+  // Connect to WiFi
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  // Wait for connection
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\nWiFi connection failed!");
+    return;
+  }
+  
+  Serial.println("\nWiFi connected");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+  
+  // Set up mDNS responder
+  if (MDNS.begin(OTA_HOSTNAME)) {
+    Serial.println("mDNS responder started");
+    Serial.printf("You can update firmware using: %s.local\n", OTA_HOSTNAME);
+  }
+  
+  // Initialize OTA
+  ArduinoOTA.setHostname(OTA_HOSTNAME);
+  
+  ArduinoOTA.onStart([]() {
+    Serial.println("OTA update starting...");
+    // Stop LVGL to prevent display conflicts during update
+    if (ditherBuffer) {
+      free(ditherBuffer);
+      ditherBuffer = NULL;
+    }
+  });
+  
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nOTA update complete!");
+  });
+  
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  });
+  
+  ArduinoOTA.begin();
+  Serial.println("OTA setup complete");
+}
+
 #endif
 
 // Forward declarations for HAL functions
@@ -340,6 +413,9 @@ void setup()
   
   // Register the display
   lv_disp_t * disp = lv_disp_drv_register(&disp_drv);
+  
+  // Set up OTA update functionality
+  setupOTA();
   #else
   // For the emulator, the display is already initialized in hal_setup()
   lv_disp_t * disp = lv_disp_get_default();
@@ -375,9 +451,12 @@ void loop()
   // Run the LVGL task handler
   lv_task_handler();
   
-  // Add a small delay to not overload the CPU
   #if defined(ARDUINO)
-    delay(5);
+  // Handle OTA updates
+  ArduinoOTA.handle();
+  
+  // Add a small delay to not overload the CPU
+  delay(5);
   #endif
 }
 
