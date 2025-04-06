@@ -37,6 +37,13 @@
   #define WIFI_SSID "Pão de Batata"
   #define WIFI_PASSWORD "bananaamassadinha"
   #define OTA_HOSTNAME "watchy-lvgl"
+  
+  // Watchy battery monitoring configuration
+  #define BATTERY_PIN 34        // ADC pin connected to battery
+  #define BATTERY_DIVIDER_RATIO 2.0f  // Voltage divider ratio (typical for Watchy)
+  #define ADC_REFERENCE_VOLTAGE 3.3f  // ESP32 reference voltage
+  #define ADC_RESOLUTION        4095  // 12-bit ADC resolution
+  #define BATTERY_SAMPLES       10    // Number of samples to average
 #endif
 
 // Define a default font explicitly for LVGL to use
@@ -64,10 +71,45 @@ GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> display(
 // LVGL display driver related objects
 static lv_disp_draw_buf_t draw_buf; // Buffer for drawing
 static lv_disp_drv_t disp_drv;      // Display driver
-static lv_indev_drv_t indev_drv;    // Input device driver
 
-// Define a default font explicitly for LVGL to use
-LV_FONT_DECLARE(lv_font_montserrat_14);
+// Battery voltage label object
+static lv_obj_t *battery_label = NULL;
+static float battery_voltage = 0.0f;
+
+// Function to read battery voltage
+float getBatteryVoltage() {
+  uint32_t adcValue = 0;
+  
+  // Take multiple samples and average them
+  for (int i = 0; i < BATTERY_SAMPLES; i++) {
+    adcValue += analogRead(BATTERY_PIN);
+    delay(10);
+  }
+  adcValue /= BATTERY_SAMPLES;
+  
+  // Convert ADC value to voltage
+  float voltage = (adcValue / (float)ADC_RESOLUTION) * ADC_REFERENCE_VOLTAGE;
+  
+  // Apply voltage divider ratio
+  voltage *= BATTERY_DIVIDER_RATIO;
+  
+  return voltage;
+}
+
+// Update the battery voltage display
+void updateBatteryDisplay() {
+  if (battery_label != NULL) {
+    // Read battery voltage
+    battery_voltage = getBatteryVoltage();
+    
+    // Format voltage string
+    char voltage_str[16];
+    snprintf(voltage_str, sizeof(voltage_str), "Batt: %.2fV", battery_voltage);
+    
+    // Update label text
+    lv_label_set_text(battery_label, voltage_str);
+  }
+}
 
 // Temporary buffer for error diffusion dithering (holds grayscale values)
 uint8_t *ditherBuffer = NULL;
@@ -245,33 +287,6 @@ void hal_cleanup(void);
 #endif
 
 /**
- * Create a simple demonstration UI
- */
-static void create_ui(lv_obj_t * parent)
-{
-  // Create a title
-  lv_obj_t * title = lv_label_create(parent);
-  lv_label_set_text(title, "LVGL Demo");
-  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-  
-  // Create a simple button
-  lv_obj_t * btn = lv_btn_create(parent);
-  lv_obj_set_size(btn, 120, 50);
-  lv_obj_align(btn, LV_ALIGN_CENTER, 0, 0);
-  
-  // Add label to button
-  lv_obj_t * btn_label = lv_label_create(btn);
-  lv_label_set_text(btn_label, "Button");
-  lv_obj_center(btn_label);
-  
-  // Create a slider
-  lv_obj_t * slider = lv_slider_create(parent);
-  lv_obj_set_size(slider, 160, 20);
-  lv_obj_align(slider, LV_ALIGN_BOTTOM_MID, 0, -40);
-  lv_slider_set_value(slider, 50, LV_ANIM_OFF);
-}
-
-/**
  * Create a grayscale demonstration UI
  * This function is used by both the Arduino and emulator environments
  */
@@ -338,6 +353,17 @@ static void create_grayscale_demo_ui(lv_obj_t * scr, lv_style_t * style_default)
   // Add the circle to the navigation group
   lv_group_add_obj(g, circle);
   
+  #if defined(ARDUINO)
+  // Add battery voltage label
+  battery_label = lv_label_create(scr);
+  lv_label_set_text(battery_label, "Batt: ?.??V");
+  lv_obj_align(battery_label, LV_ALIGN_TOP_LEFT, 10, 22);
+  lv_obj_set_style_text_color(battery_label, lv_color_black(), 0);
+  if (style_default != NULL) {
+    lv_obj_add_style(battery_label, style_default, 0);
+  }
+  #endif
+  
   // Return the navigation group so both environments can use it
   lv_group_set_default(g);
   
@@ -362,6 +388,9 @@ void setup()
   Serial.begin(115200);
   Serial.println("Starting Watchy LVGL application");
 
+  // Setup ADC for battery monitoring
+  analogReadResolution(12);  // Set ADC resolution to 12-bit
+  
   // Setup button pins with pullups
   pinMode(BUTTON_BACK, INPUT_PULLUP);
   pinMode(BUTTON_MENU, INPUT_PULLUP);
@@ -452,6 +481,13 @@ void loop()
   lv_task_handler();
   
   #if defined(ARDUINO)
+  // Update battery display (not too frequently to avoid display flicker)
+  static uint32_t lastBatteryUpdate = 0;
+  if (millis() - lastBatteryUpdate > 30000) { // Update every 30 seconds
+    updateBatteryDisplay();
+    lastBatteryUpdate = millis();
+  }
+  
   // Handle OTA updates
   ArduinoOTA.handle();
   
