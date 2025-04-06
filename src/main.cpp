@@ -39,7 +39,43 @@ static lv_indev_drv_t indev_drv;    // Input device driver
 // Define a default font explicitly for LVGL to use
 LV_FONT_DECLARE(lv_font_montserrat_14);
 
-// Simplified display flush callback for e-paper display
+// Temporary buffer for error diffusion dithering (holds grayscale values)
+uint8_t *ditherBuffer = NULL;
+
+// Function to perform Floyd-Steinberg dithering
+void dither_image(uint8_t *pixels, int width, int height) {
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      // Get current pixel
+      uint8_t oldPixel = pixels[y * width + x];
+      
+      // Apply threshold to decide black or white
+      uint8_t newPixel = (oldPixel < 128) ? 0 : 255;
+      
+      // Calculate quantization error
+      int error = oldPixel - newPixel;
+      
+      // Store the new pixel
+      pixels[y * width + x] = newPixel;
+      
+      // Distribute error to neighboring pixels
+      if (x + 1 < width)
+        pixels[y * width + x + 1] = min(255, max(0, pixels[y * width + x + 1] + error * 7 / 16));
+      
+      if (y + 1 < height) {
+        if (x > 0)
+          pixels[(y + 1) * width + x - 1] = min(255, max(0, pixels[(y + 1) * width + x - 1] + error * 3 / 16));
+          
+        pixels[(y + 1) * width + x] = min(255, max(0, pixels[(y + 1) * width + x] + error * 5 / 16));
+        
+        if (x + 1 < width)
+          pixels[(y + 1) * width + x + 1] = min(255, max(0, pixels[(y + 1) * width + x + 1] + error * 1 / 16));
+      }
+    }
+  }
+}
+
+// Simplified display flush callback with dithering for e-paper display
 static void my_disp_flush(lv_disp_drv_t * disp, const lv_area_t * area, lv_color_t * px_map)
 {
   // For e-paper display, we need a simple approach
@@ -48,26 +84,44 @@ static void my_disp_flush(lv_disp_drv_t * disp, const lv_area_t * area, lv_color
   
   Serial.printf("Flushing area: x1=%d, y1=%d, x2=%d, y2=%d\n", area->x1, area->y1, area->x2, area->y2);
   
-  // Use partial window update for better performance
+  // Allocate or reallocate the dither buffer if needed
+  if (ditherBuffer == NULL || disp->hor_res * disp->ver_res != lvScreenWidth * lvScreenHeight) {
+    if (ditherBuffer != NULL) 
+      free(ditherBuffer);
+    
+    ditherBuffer = (uint8_t*)malloc(w * h);
+    if (ditherBuffer == NULL) {
+      Serial.println("Failed to allocate dither buffer!");
+      lv_disp_flush_ready(disp);
+      return;
+    }
+  }
+  
+  // Convert LVGL color to grayscale
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      lv_color_t pixel = px_map[y * w + x];
+      uint8_t gray = lv_color_brightness(pixel);
+      ditherBuffer[y * w + x] = gray;
+    }
+  }
+  
+  // Perform dithering on the grayscale values
+  dither_image(ditherBuffer, w, h);
+  
+  // Set up the window and draw to display
   display.setPartialWindow(area->x1, area->y1, w, h);
   display.firstPage();
   
   do {
-    // Clear area with white
+    // Clear with white
     display.fillScreen(GxEPD_WHITE);
     
-    // Process each pixel in the area
-    for(int y = 0; y < h; y++) {
-      for(int x = 0; x < w; x++) {
-        // Get the pixel value from px_map
-        lv_color_t pixel = px_map[y * w + x];
-        
-        // For monochrome display, convert LVGL color to e-paper color
-        // In LVGL, 0 is black, 1 is white (for monochrome)
-        // In GxEPD2, GxEPD_BLACK is black (0), GxEPD_WHITE is white (1)
-        uint16_t color = lv_color_brightness(pixel) > 128 ? GxEPD_WHITE : GxEPD_BLACK;
-        
-        // Draw the pixel on the e-paper display
+    // Draw the dithered image
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        // Dithered values are either 0 or 255
+        uint16_t color = (ditherBuffer[y * w + x] == 0) ? GxEPD_BLACK : GxEPD_WHITE;
         display.drawPixel(area->x1 + x, area->y1 + y, color);
       }
     }
@@ -75,6 +129,14 @@ static void my_disp_flush(lv_disp_drv_t * disp, const lv_area_t * area, lv_color
   
   // Inform LVGL that the flushing is done
   lv_disp_flush_ready(disp);
+}
+
+// Free dither buffer when the program exits
+void cleanup() {
+  if (ditherBuffer != NULL) {
+    free(ditherBuffer);
+    ditherBuffer = NULL;
+  }
 }
 
 // Button read callback - simplified
@@ -154,8 +216,8 @@ void setup()
   // For monochrome e-paper display specific settings
   disp_drv.rounder_cb = NULL;     // No need for special rounding
   disp_drv.set_px_cb = NULL;      // No special pixel setter needed
-  disp_drv.antialiasing = 0;      // No antialiasing for e-paper
-  disp_drv.full_refresh = 1;      // Use full refresh mode
+  disp_drv.antialiasing = 1;      // Enable antialiasing for better dithering
+  disp_drv.full_refresh = 0;      // Use partial refresh mode for better animation
   
   // Register the display
   lv_disp_t * disp = lv_disp_drv_register(&disp_drv);
@@ -169,7 +231,7 @@ void setup()
   lv_style_init(&style_default);
   lv_style_set_text_font(&style_default, &lv_font_montserrat_14);
   
-  // Create a screen with black/white contrast settings
+  // Create a screen with gradient demonstration
   lv_obj_t * scr = lv_obj_create(NULL);
   lv_obj_add_style(scr, &style_default, 0); // Apply the default style to the screen
   
@@ -177,44 +239,68 @@ void setup()
   lv_obj_set_style_bg_color(scr, lv_color_white(), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   
-  // Create a black rectangle for contrast
-  lv_obj_t * rect1 = lv_obj_create(scr);
-  lv_obj_set_size(rect1, 100, 50);
-  lv_obj_align(rect1, LV_ALIGN_TOP_MID, 0, 20);
-  lv_obj_set_style_bg_color(rect1, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(rect1, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(rect1, 2, 0);
-  lv_obj_set_style_border_color(rect1, lv_color_white(), 0);
+  // Create a title
+  lv_obj_t * title = lv_label_create(scr);
+  lv_obj_add_style(title, &style_default, 0);
+  lv_label_set_text(title, "Grayscale Demo");
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
   
-  // Add the rectangle to the group for navigation
+  // Create a group for navigation
   lv_group_t * g = lv_group_create();
-  lv_group_add_obj(g, rect1);
   
-  // Create a white label on the black rectangle for contrast
-  lv_obj_t * label1 = lv_label_create(rect1);
-  lv_obj_add_style(label1, &style_default, 0);
-  lv_label_set_text(label1, "Watchy");
-  lv_obj_align(label1, LV_ALIGN_CENTER, 0, 0);
-  lv_obj_set_style_text_color(label1, lv_color_white(), 0);
+  // Creating rectangles with different opacities for grayscale demonstration
+  for (int i = 0; i < 5; i++) {
+    lv_obj_t * rect = lv_obj_create(scr);
+    lv_obj_set_size(rect, 150, 20);
+    lv_obj_align(rect, LV_ALIGN_TOP_MID, 0, 40 + i * 25);
+    
+    // Set opacity from 50 to 250 (20% to 100%)
+    uint8_t opacity = 50 + i * 50;
+    lv_obj_set_style_bg_color(rect, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(rect, opacity, 0);
+    lv_obj_set_style_border_width(rect, 1, 0);
+    lv_obj_set_style_border_color(rect, lv_color_black(), 0);
+    
+    // Add rectangle to navigation group
+    lv_group_add_obj(g, rect);
+    
+    // Add a label with the opacity percentage
+    lv_obj_t * label = lv_label_create(rect);
+    lv_obj_add_style(label, &style_default, 0);
+    char buf[20];
+    snprintf(buf, sizeof(buf), "%d%%", opacity * 100 / 255);
+    lv_label_set_text(label, buf);
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+  }
   
-  // Create a white rectangle for contrast
-  lv_obj_t * rect2 = lv_obj_create(scr);
-  lv_obj_set_size(rect2, 100, 50);
-  lv_obj_align(rect2, LV_ALIGN_BOTTOM_MID, 0, -20);
-  lv_obj_set_style_bg_color(rect2, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(rect2, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(rect2, 2, 0);
-  lv_obj_set_style_border_color(rect2, lv_color_black(), 0);
+  // Add a circle with gradient for demonstration
+  lv_obj_t * circle = lv_obj_create(scr);
+  lv_obj_remove_style_all(circle);
+  lv_obj_set_size(circle, 80, 80);
+  lv_obj_set_style_radius(circle, 40, 0);
+  lv_obj_align(circle, LV_ALIGN_BOTTOM_MID, 0, -20);
   
-  // Add the second rectangle to the navigation group
-  lv_group_add_obj(g, rect2);
+  // Create a gradient from black to white
+  lv_grad_dsc_t grad;
+  grad.dir = LV_GRAD_DIR_HOR;
+  grad.stops_count = 2;
+  grad.stops[0].color = lv_color_black();
+  grad.stops[0].frac = 0;
+  grad.stops[1].color = lv_color_white();
+  grad.stops[1].frac = 255;
   
-  // Create a black label on the white rectangle for contrast
-  lv_obj_t * label2 = lv_label_create(rect2);
-  lv_obj_add_style(label2, &style_default, 0);
-  lv_label_set_text(label2, "LVGL");
-  lv_obj_align(label2, LV_ALIGN_CENTER, 0, 0);
-  lv_obj_set_style_text_color(label2, lv_color_black(), 0);
+  // Apply the gradient
+  lv_obj_set_style_bg_grad(circle, &grad, 0);
+  lv_obj_set_style_bg_grad_dir(circle, LV_GRAD_DIR_HOR, 0);
+  lv_obj_set_style_bg_main_stop(circle, 0, 0);
+  lv_obj_set_style_bg_grad_stop(circle, 255, 0);
+  lv_obj_set_style_bg_color(circle, lv_color_black(), 0);
+  lv_obj_set_style_bg_grad_color(circle, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(circle, LV_OPA_COVER, 0);
+  
+  // Add the circle to the navigation group
+  lv_group_add_obj(g, circle);
   
   // Initialize keypad input and connect to navigation group
   lv_indev_drv_init(&indev_drv);
