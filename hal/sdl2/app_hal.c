@@ -99,9 +99,10 @@ static void flush_cb(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_
                 lv_color_t color = px_map[y * w + x];
                 
                 // Convert LVGL color to ARGB for SDL
-                // For e-paper (monochrome) display, use a simple threshold
+                // For e-paper emulation, use grayscale instead of pure black/white
                 uint8_t brightness = lv_color_brightness(color);
-                uint32_t sdl_color = (brightness < 128) ? 0xFF000000 : 0xFFFFFFFF;
+                // Create a grayscale color with alpha=255
+                uint32_t sdl_color = 0xFF000000 | (brightness << 16) | (brightness << 8) | brightness;
                 
                 pixel_buffer[pos] = sdl_color;
             }

@@ -224,6 +224,106 @@ static void create_ui(lv_obj_t * parent)
   lv_slider_set_value(slider, 50, LV_ANIM_OFF);
 }
 
+/**
+ * Create a grayscale demonstration UI
+ * This function is used by both the Arduino and emulator environments
+ */
+static void create_grayscale_demo_ui(lv_obj_t * scr, lv_style_t * style_default)
+{
+  // Set screen background to white
+  lv_obj_set_style_bg_color(scr, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+  
+  // Create a title
+  lv_obj_t * title = lv_label_create(scr);
+  if (style_default != NULL) {
+    lv_obj_add_style(title, style_default, 0);
+  }
+  lv_label_set_text(title, "Grayscale Demo");
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+  
+  // Create a group for navigation
+  lv_group_t * g = lv_group_create();
+  
+  // Creating rectangles with different opacities for grayscale demonstration
+  for (int i = 0; i < 5; i++) {
+    lv_obj_t * rect = lv_obj_create(scr);
+    lv_obj_set_size(rect, 150, 20);
+    lv_obj_align(rect, LV_ALIGN_TOP_MID, 0, 40 + i * 25);
+    
+    // Set opacity from 50 to 250 (20% to 100%)
+    uint8_t opacity = 50 + i * 50;
+    lv_obj_set_style_bg_color(rect, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(rect, opacity, 0);
+    lv_obj_set_style_border_width(rect, 1, 0);
+    lv_obj_set_style_border_color(rect, lv_color_black(), 0);
+    
+    // Add rectangle to navigation group
+    lv_group_add_obj(g, rect);
+    
+    // Add a label with the opacity percentage
+    lv_obj_t * label = lv_label_create(rect);
+    if (style_default != NULL) {
+      lv_obj_add_style(label, style_default, 0);
+    }
+    char buf[20];
+    snprintf(buf, sizeof(buf), "%d%%", opacity * 100 / 255);
+    lv_label_set_text(label, buf);
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+  }
+  
+  // Add a circle with gradient for demonstration
+  lv_obj_t * circle = lv_obj_create(scr);
+  lv_obj_remove_style_all(circle);
+  lv_obj_set_size(circle, 80, 80);
+  lv_obj_set_style_radius(circle, 40, 0);
+  lv_obj_align(circle, LV_ALIGN_BOTTOM_MID, 0, -20);
+  
+  // Create a gradient from black to white
+  lv_grad_dsc_t grad;
+  grad.dir = LV_GRAD_DIR_HOR;
+  grad.stops_count = 2;
+  grad.stops[0].color = lv_color_black();
+  grad.stops[0].frac = 0;
+  grad.stops[1].color = lv_color_white();
+  grad.stops[1].frac = 255;
+  
+  // Apply the gradient
+  lv_obj_set_style_bg_grad(circle, &grad, 0);
+  lv_obj_set_style_bg_grad_dir(circle, LV_GRAD_DIR_HOR, 0);
+  lv_obj_set_style_bg_main_stop(circle, 0, 0);
+  lv_obj_set_style_bg_grad_stop(circle, 255, 0);
+  lv_obj_set_style_bg_color(circle, lv_color_black(), 0);
+  lv_obj_set_style_bg_grad_color(circle, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(circle, LV_OPA_COVER, 0);
+  
+  // Add the circle to the navigation group
+  lv_group_add_obj(g, circle);
+  
+  // Return the navigation group so both environments can use it
+  lv_group_set_default(g);
+  
+  #if defined(ARDUINO)
+  // Initialize keypad input and connect to navigation group
+  lv_indev_drv_init(&indev_drv);
+  indev_drv.type = LV_INDEV_TYPE_KEYPAD;
+  indev_drv.read_cb = read_encoder;
+  lv_indev_t * indev = lv_indev_drv_register(&indev_drv);
+  lv_indev_set_group(indev, g);
+  #else
+  // For emulator, connect the keyboard input device to our group
+  lv_indev_t * kbd_indev = lv_indev_get_next(NULL);
+  while(kbd_indev) {
+    if(lv_indev_get_type(kbd_indev) == LV_INDEV_TYPE_KEYPAD) {
+      lv_indev_set_group(kbd_indev, g);
+      break;
+    }
+    kbd_indev = lv_indev_get_next(kbd_indev);
+  }
+  #endif
+}
+
 void setup()
 {
   #if defined(ARDUINO)
@@ -299,94 +399,8 @@ void setup()
   lv_obj_t * scr = lv_obj_create(NULL);
   lv_obj_add_style(scr, &style_default, 0); // Apply the default style to the screen
   
-  // Set screen background to white
-  lv_obj_set_style_bg_color(scr, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-  
-  // Create a title
-  lv_obj_t * title = lv_label_create(scr);
-  lv_obj_add_style(title, &style_default, 0);
-  lv_label_set_text(title, "Grayscale Demo");
-  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-  
-  // Create a group for navigation
-  lv_group_t * g = lv_group_create();
-  
-  // Creating rectangles with different opacities for grayscale demonstration
-  for (int i = 0; i < 5; i++) {
-    lv_obj_t * rect = lv_obj_create(scr);
-    lv_obj_set_size(rect, 150, 20);
-    lv_obj_align(rect, LV_ALIGN_TOP_MID, 0, 40 + i * 25);
-    
-    // Set opacity from 50 to 250 (20% to 100%)
-    uint8_t opacity = 50 + i * 50;
-    lv_obj_set_style_bg_color(rect, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(rect, opacity, 0);
-    lv_obj_set_style_border_width(rect, 1, 0);
-    lv_obj_set_style_border_color(rect, lv_color_black(), 0);
-    
-    // Add rectangle to navigation group
-    lv_group_add_obj(g, rect);
-    
-    // Add a label with the opacity percentage
-    lv_obj_t * label = lv_label_create(rect);
-    lv_obj_add_style(label, &style_default, 0);
-    char buf[20];
-    snprintf(buf, sizeof(buf), "%d%%", opacity * 100 / 255);
-    lv_label_set_text(label, buf);
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-  }
-  
-  // Add a circle with gradient for demonstration
-  lv_obj_t * circle = lv_obj_create(scr);
-  lv_obj_remove_style_all(circle);
-  lv_obj_set_size(circle, 80, 80);
-  lv_obj_set_style_radius(circle, 40, 0);
-  lv_obj_align(circle, LV_ALIGN_BOTTOM_MID, 0, -20);
-  
-  // Create a gradient from black to white
-  lv_grad_dsc_t grad;
-  grad.dir = LV_GRAD_DIR_HOR;
-  grad.stops_count = 2;
-  grad.stops[0].color = lv_color_black();
-  grad.stops[0].frac = 0;
-  grad.stops[1].color = lv_color_white();
-  grad.stops[1].frac = 255;
-  
-  // Apply the gradient
-  lv_obj_set_style_bg_grad(circle, &grad, 0);
-  lv_obj_set_style_bg_grad_dir(circle, LV_GRAD_DIR_HOR, 0);
-  lv_obj_set_style_bg_main_stop(circle, 0, 0);
-  lv_obj_set_style_bg_grad_stop(circle, 255, 0);
-  lv_obj_set_style_bg_color(circle, lv_color_black(), 0);
-  lv_obj_set_style_bg_grad_color(circle, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(circle, LV_OPA_COVER, 0);
-  
-  // Add the circle to the navigation group
-  lv_group_add_obj(g, circle);
-  
-  // Initialize keypad input and connect to navigation group
-  #if defined(ARDUINO)
-  lv_indev_drv_init(&indev_drv);
-  indev_drv.type = LV_INDEV_TYPE_KEYPAD;
-  indev_drv.read_cb = read_encoder;
-  lv_indev_t * indev = lv_indev_drv_register(&indev_drv);
-  lv_indev_set_group(indev, g);
-  #else
-  // For emulator, connect the keyboard input device to our group
-  lv_indev_t * kbd_indev = lv_indev_get_next(NULL);
-  while(kbd_indev) {
-    if(lv_indev_get_type(kbd_indev) == LV_INDEV_TYPE_KEYPAD) {
-      lv_indev_set_group(kbd_indev, g);
-      break;
-    }
-    kbd_indev = lv_indev_get_next(kbd_indev);
-  }
-  #endif
-  
-  // Set the default group
-  lv_group_set_default(g);
+  // Create the grayscale demo UI
+  create_grayscale_demo_ui(scr, &style_default);
   
   // Set the screen
   lv_scr_load(scr);
@@ -417,12 +431,25 @@ int main(int argc, char *argv[]) {
   // Initialize the HAL for SDL - this sets up SDL and the display driver
   hal_setup();
   
-  // Create a screen for our demo
+  // Create a screen with gradient demonstration (same as in Arduino setup)
   lv_obj_t * scr = lv_obj_create(NULL);
-  lv_scr_load(scr);
   
-  // Create a simple UI
-  create_ui(scr);
+  // Set the theme to monochrome with explicit font
+  lv_disp_t * disp = lv_disp_get_default();
+  lv_theme_t * theme = lv_theme_mono_init(disp, false, &lv_font_montserrat_14);
+  lv_disp_set_theme(disp, theme);
+  
+  // Set the default font explicitly to avoid the font issue
+  lv_style_t style_default;
+  lv_style_init(&style_default);
+  lv_style_set_text_font(&style_default, &lv_font_montserrat_14);
+  lv_obj_add_style(scr, &style_default, 0);
+  
+  // Create the grayscale demo UI using the shared function
+  create_grayscale_demo_ui(scr, &style_default);
+  
+  // Load the screen
+  lv_scr_load(scr);
   
   // Main loop for the emulator
   while(1) {
