@@ -11,6 +11,11 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Fonts/FreeMonoBold9pt7b.h>
+#include <Fonts/FreeMono24pt7b.h>
+#include <Fonts/FreeMonoBold12pt7b.h>
+#include <Fonts/FreeSans9pt7b.h>        // Add proportional Sans font
+#include <Fonts/FreeSansBold9pt7b.h>    // Add bold proportional Sans font
+#include <Fonts/FreeSansBold12pt7b.h>   // Add larger bold proportional Sans font
 #include "../hal/esp32/displays/LGFX_WATCHY_EPAPER.hpp"
 #include <WiFi.h>
 #include <ArduinoOTA.h>
@@ -133,6 +138,58 @@ float getMavlinkBatteryVoltage(const String& vehicleIP) {
   return batteryVoltage;
 }
 
+// Function to get vehicle name from the API
+String getVehicleName(const String& vehicleIP) {
+  String vehicleName = "Vehicle";  // Default name if API call fails
+  
+  if (vehicleIP.length() == 0) {
+    return vehicleName;
+  }
+  
+  HTTPClient http;
+  
+  // Construct the URL for the vehicle name endpoint
+  String url = "http://" + vehicleIP + ":9111/v1.0/vehicle_name";
+  
+  Serial.println("Getting vehicle name from: " + url);
+  http.begin(url);
+  
+  // Set timeout for the request
+  http.setTimeout(3000); // 3 second timeout
+  
+  // Send GET request
+  int httpResponseCode = http.GET();
+  
+  if (httpResponseCode > 0) {
+    Serial.printf("HTTP Response code: %d\n", httpResponseCode);
+    String payload = http.getString();
+    Serial.println("Name payload: " + payload);
+    
+    // Trim whitespace and use the response as vehicle name
+    vehicleName = payload;
+    vehicleName.trim();
+    
+    // Remove any double quotes from the name
+    for (int i = 0; i < vehicleName.length(); i++) {
+      if (vehicleName[i] == '"') {
+        vehicleName.remove(i, 1);
+        i--; // Adjust index after removal
+      }
+    }
+    
+    // If empty response, use default
+    if (vehicleName.length() == 0) {
+      vehicleName = "Vehicle";
+    }
+  } else {
+    Serial.printf("Name request failed, error: %d\n", httpResponseCode);
+  }
+  
+  http.end();
+  
+  return vehicleName;
+}
+
 // Function to draw UI on the display
 void drawUI() {
   display.setFullWindow();
@@ -148,67 +205,94 @@ void drawUI() {
     int voltsDec = (int)((voltage - voltsInt) * 100);
     snprintf(batteryBuffer, sizeof(batteryBuffer), "%d.%02dV", voltsInt, voltsDec);
     
-    display.setFont(&FreeMonoBold9pt7b);
+    // Use monospace font for battery (keeps digits aligned)
+    display.setFont(&FreeMono24pt7b);
     display.setTextColor(GxEPD_BLACK);
     display.setCursor(4, 30);
-    display.setTextSize(2);
     display.print(batteryBuffer);
     
-    // Draw "Vehicle" label
-    display.setTextSize(1);
-    display.setCursor(4, 70);
-    display.print("Vehicle");
-    
-    // Draw mavlink status
-    char mavlinkBuffer[128];
-    bool serviceFound = false;
-    String vehicleIP = "";
-    
-    // Query mDNS for mavlink service
+    // Draw mavlink status - up to 3 vehicles
     int n = MDNS.queryService("mavlink", "udp");
+    int yPos = 80; // Start higher up since we removed the "Vehicle" label
+    
     if (n > 0) {
-      // Service found - get the IP
-      vehicleIP = MDNS.IP(0).toString();
-      serviceFound = true;
+      // Array to store unique IP addresses
+      String uniqueIPs[3]; // Store up to 3 unique IPs
+      int uniqueCount = 0;
       
-      // Get battery voltage from the vehicle
-      float batteryVoltage = getMavlinkBatteryVoltage(vehicleIP);
+      // Find unique IP addresses
+      for (int i = 0; i < n && uniqueCount < 3; i++) {
+        String currentIP = MDNS.IP(i).toString();
+        bool isDuplicate = false;
+        
+        // Check if this IP is already in our unique list
+        for (int j = 0; j < uniqueCount; j++) {
+          if (currentIP == uniqueIPs[j]) {
+            isDuplicate = true;
+            break;
+          }
+        }
+        
+        // If not a duplicate, add to our list
+        if (!isDuplicate) {
+          uniqueIPs[uniqueCount++] = currentIP;
+        }
+      }
       
-      if (batteryVoltage > 0) {
-        // Display IP and battery voltage
-        snprintf(mavlinkBuffer, sizeof(mavlinkBuffer), "%s\nBatt: %.2fV", 
-                vehicleIP.c_str(), batteryVoltage);
-      } else {
-        // Could not get battery voltage, just show IP
-        snprintf(mavlinkBuffer, sizeof(mavlinkBuffer), "%s\nBatt: --", 
-                vehicleIP.c_str());
+      // Display unique vehicles and fetch their voltages
+      // Use proportional font for vehicle names and voltage display
+      display.setFont(&FreeMonoBold12pt7b);
+      display.setTextSize(1); // Using a larger font but smaller text size for better clarity
+      
+      for (int i = 0; i < uniqueCount; i++) {
+        // Get vehicle name
+        String vehicleName = getVehicleName(uniqueIPs[i]);
+        
+        // Truncate name even more to fit display at larger text size (max 8 chars)
+        if (vehicleName.length() > 8) {
+          vehicleName = vehicleName.substring(0, 8);
+        }
+        
+        // Get battery voltage from the vehicle
+        float batteryVoltage = getMavlinkBatteryVoltage(uniqueIPs[i]);
+        
+        // Display the name and battery voltage 
+        char vehicleBuffer[32];
+        if (batteryVoltage > 0) {
+          snprintf(vehicleBuffer, sizeof(vehicleBuffer), "%s: %.2fV", vehicleName.c_str(), batteryVoltage);
+        } else {
+          snprintf(vehicleBuffer, sizeof(vehicleBuffer), "%s: --", vehicleName.c_str());
+        }
+        
+        display.setCursor(4, yPos);
+        display.print(vehicleBuffer);
+        yPos += 35; // Adjusted spacing for proportional font
+      }
+      
+      if (uniqueCount == 0) {
+        display.setCursor(4, yPos);
+        display.print("No vehicles");
       }
     } else {
-      snprintf(mavlinkBuffer, sizeof(mavlinkBuffer), "Mavlink: Not found");
+      // Use proportional font
+      display.setFont(&FreeMonoBold12pt7b);
+      display.setTextSize(1);
+      display.setCursor(4, yPos);
+      display.print("No vehicles");
     }
     
-    display.setCursor(4, 100);
-    display.print(mavlinkBuffer);
-    
-    // Draw WiFi status
+    // Draw WiFi status - just OK and SSID, no IP
+    display.setFont(&FreeSans9pt7b); // Use smaller proportional font for WiFi info
+    display.setTextSize(1);
     char wifiBuffer[64];
     if (WiFi.status() == WL_CONNECTED) {
-      snprintf(wifiBuffer, sizeof(wifiBuffer), "WiFi: Connected\nIP: %s", WiFi.localIP().toString().c_str());
+      snprintf(wifiBuffer, sizeof(wifiBuffer), "OK %s", WIFI_SSID);
     } else {
-      snprintf(wifiBuffer, sizeof(wifiBuffer), "WiFi: Disconnected");
+      snprintf(wifiBuffer, sizeof(wifiBuffer), "WiFi: ----");
     }
     
-    display.setCursor(4, 140);
-    display.print(wifiBuffer);
-    
-    // Draw uptime
     display.setCursor(4, 180);
-    display.print("Uptime");
-    unsigned long uptime = millis() / 1000; // seconds
-    unsigned long uptimeMin = uptime / 60;
-    unsigned long uptimeHours = uptimeMin / 60;
-    display.setCursor(80, 180);
-    display.printf("%02lu:%02lu:%02lu", uptimeHours, uptimeMin % 60, uptime % 60);
+    display.print(wifiBuffer);
     
   } while (display.nextPage());
 }
@@ -270,6 +354,30 @@ void setupOTA() {
   Serial.println("OTA setup complete");
 }
 
+// Function to check WiFi connection and reconnect if needed
+void checkAndReconnectWiFi() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected, reconnecting...");
+    WiFi.disconnect();
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    
+    // Wait briefly for connection
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 10) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nWiFi reconnected");
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
+    }
+  }
+}
+
 // Arduino setup function
 void setup() {
   Serial.begin(115200);
@@ -319,7 +427,14 @@ void setup() {
 // Arduino loop function
 void loop() {
   static unsigned long lastDrawTime = 0;
+  static unsigned long lastWiFiCheck = 0;
   unsigned long currentTime = millis();
+
+  // Check and reconnect WiFi if disconnected (every 30 seconds)
+  if (currentTime - lastWiFiCheck >= 30000) {
+    checkAndReconnectWiFi();
+    lastWiFiCheck = currentTime;
+  }
 
   if (currentTime - lastDrawTime >= 60000 || BatteryDisplay::getInstance()->shouldUpdate()) {
     drawUI();
