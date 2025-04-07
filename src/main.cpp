@@ -296,6 +296,17 @@ void drawUI() {
     display.setCursor(4, 180);
     display.print(wifiBuffer);
     
+    // Add uptime in minutes on the lower right corner
+    unsigned long uptimeMinutes = millis() / 60000; // Convert milliseconds to minutes
+    char uptimeBuffer[16];
+    snprintf(uptimeBuffer, sizeof(uptimeBuffer), "%lum", uptimeMinutes);
+    
+    int16_t tbx, tby;
+    uint16_t tbw, tbh;
+    display.getTextBounds(uptimeBuffer, 0, 0, &tbx, &tby, &tbw, &tbh);
+    display.setCursor(display.width() - tbw - 5, 180); // Position on lower right
+    display.print(uptimeBuffer);
+    
   } while (display.nextPage());
 }
 
