@@ -23,7 +23,8 @@
 #include <HTTPClient.h>
 
 // WiFi credentials for OTA updates
-#define WIFI_SSID "Pão de Batata"
+// #define WIFI_SSID "Pão de Batata"
+#define WIFI_SSID "spool-iot"
 #define WIFI_PASSWORD "bananaamassadinha"
 #define OTA_HOSTNAME "watchy-lvgl"
 
