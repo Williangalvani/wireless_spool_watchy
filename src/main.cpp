@@ -11,7 +11,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Fonts/FreeMonoBold9pt7b.h>
-#include <Fonts/FreeMonoBold24pt7b.h>
+#include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeMonoBold12pt7b.h>
 #include <Fonts/FreeSans9pt7b.h>        // Add proportional Sans font
 #include <Fonts/FreeSansBold9pt7b.h>    // Add bold proportional Sans font
@@ -207,9 +207,10 @@ void drawUI() {
     snprintf(batteryBuffer, sizeof(batteryBuffer), "%d.%02dV", voltsInt, voltsDec);
     
     // Use monospace font for battery (keeps digits aligned)
-    display.setFont(&FreeMonoBold24pt7b);
+    display.setFont(&FreeSansBold18pt7b);
     display.setTextColor(GxEPD_BLACK);
-    display.setCursor(4, 30);
+    display.setCursor(0, 50);
+    display.setTextSize(2);
     display.print(batteryBuffer);
     
     // Draw mavlink status - up to 3 vehicles
