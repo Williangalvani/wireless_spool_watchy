@@ -11,7 +11,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Fonts/FreeMonoBold9pt7b.h>
-#include <Fonts/FreeMono24pt7b.h>
+#include <Fonts/FreeMonoBold24pt7b.h>
 #include <Fonts/FreeMonoBold12pt7b.h>
 #include <Fonts/FreeSans9pt7b.h>        // Add proportional Sans font
 #include <Fonts/FreeSansBold9pt7b.h>    // Add bold proportional Sans font
@@ -85,7 +85,7 @@ public:
     // ADC range is 0-4095 for 0-3.3V
     int adcValue = analogRead(batteryPin);
     float voltage = adcValue * 3.3 * 2 / 4095.0;
-    currentVoltage = voltage;
+    currentVoltage = voltage * 1.05;
     Serial.printf("Battery ADC: %d, Voltage: %.2fV\n", adcValue, voltage);
   }
 };
@@ -207,7 +207,7 @@ void drawUI() {
     snprintf(batteryBuffer, sizeof(batteryBuffer), "%d.%02dV", voltsInt, voltsDec);
     
     // Use monospace font for battery (keeps digits aligned)
-    display.setFont(&FreeMono24pt7b);
+    display.setFont(&FreeMonoBold24pt7b);
     display.setTextColor(GxEPD_BLACK);
     display.setCursor(4, 30);
     display.print(batteryBuffer);
@@ -250,8 +250,8 @@ void drawUI() {
         String vehicleName = getVehicleName(uniqueIPs[i]);
         
         // Truncate name even more to fit display at larger text size (max 8 chars)
-        if (vehicleName.length() > 8) {
-          vehicleName = vehicleName.substring(0, 8);
+        if (vehicleName.length() > 7) {
+          vehicleName = vehicleName.substring(0, 7);
         }
         
         // Get battery voltage from the vehicle
@@ -260,12 +260,12 @@ void drawUI() {
         // Display the name and battery voltage 
         char vehicleBuffer[32];
         if (batteryVoltage > 0) {
-          snprintf(vehicleBuffer, sizeof(vehicleBuffer), "%s: %.2fV", vehicleName.c_str(), batteryVoltage);
+          snprintf(vehicleBuffer, sizeof(vehicleBuffer), "%s %.1fV", vehicleName.c_str(), batteryVoltage);
         } else {
           snprintf(vehicleBuffer, sizeof(vehicleBuffer), "%s: --", vehicleName.c_str());
         }
         
-        display.setCursor(4, yPos);
+        display.setCursor(0, yPos);
         display.print(vehicleBuffer);
         yPos += 35; // Adjusted spacing for proportional font
       }
