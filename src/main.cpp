@@ -22,6 +22,7 @@
 #include <ESPmDNS.h>
 #include <HTTPClient.h>
 #include <WebServer.h>
+#include "esp_sleep.h"
 
 // WiFi icon bitmap (20x20 pixels)
 const unsigned char WIFI_ICON[] PROGMEM = {
@@ -64,6 +65,12 @@ float batteryVoltage = 0.0f;
 bool wifiConnected = false;
 unsigned long deviceUptime = 0;
 String ipAddress = "0.0.0.0"; // Add variable to store IP address
+
+// Track WiFi connection attempts
+unsigned long wifiDisconnectedTime = 0;
+int reconnectionAttempts = 0;
+const int MAX_RECONNECTION_ATTEMPTS = 5; // Try 5 times before sleeping
+const unsigned long WIFI_DEEP_SLEEP_DURATION = 60e6; // 60 seconds in microseconds
 
 // Create the display instance
 GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> display(
@@ -134,7 +141,8 @@ BatteryDisplay* BatteryDisplay::instance = nullptr;
 float getMavlinkBatteryVoltage(const String& vehicleIP) {
   float batteryVoltage = -1.0f; // Default value indicating failure
   
-  if (vehicleIP.length() == 0 || vehicleIP == "Not found") {
+  if (vehicleIP.length() == 0 || vehicleIP == "Not found" || vehicleIP == "0.0.0.0") {
+    Serial.println("Invalid vehicle IP address");
     return batteryVoltage;
   }
   
@@ -168,7 +176,46 @@ float getMavlinkBatteryVoltage(const String& vehicleIP) {
       Serial.println("Failed to parse voltage value from response");
     }
   } else {
-    Serial.printf("HTTP request failed, error: %d\n", httpResponseCode);
+    // Improved error reporting
+    String errorMsg;
+    switch (httpResponseCode) {
+      case -1:
+        errorMsg = "Connection failed";
+        break;
+      case -2:
+        errorMsg = "Connection lost";
+        break;
+      case -3:
+        errorMsg = "Connection timed out";
+        break;
+      case -4:
+        errorMsg = "Server sent invalid response";
+        break;
+      case -5:
+        errorMsg = "Connection refused";
+        break;
+      case -6:
+        errorMsg = "Invalid server response";
+        break;
+      case -7:
+        errorMsg = "Failed to allocate stream";
+        break;
+      case -8:
+        errorMsg = "Not enough memory";
+        break;
+      case -9:
+        errorMsg = "Invalid HTTP response";
+        break;
+      case -10:
+        errorMsg = "More data pending";
+        break;
+      case -11:
+        errorMsg = "Connection timeout";
+        break;
+      default:
+        errorMsg = "Unknown error";
+    }
+    Serial.printf("HTTP request failed, error: %d (%s)\n", httpResponseCode, errorMsg.c_str());
   }
   
   http.end();
@@ -180,7 +227,8 @@ float getMavlinkBatteryVoltage(const String& vehicleIP) {
 String getVehicleName(const String& vehicleIP) {
   String vehicleName = "Vehicle";  // Default name if API call fails
   
-  if (vehicleIP.length() == 0) {
+  if (vehicleIP.length() == 0 || vehicleIP == "0.0.0.0") {
+    Serial.println("Invalid vehicle IP for name lookup");
     return vehicleName;
   }
   
@@ -220,7 +268,46 @@ String getVehicleName(const String& vehicleIP) {
       vehicleName = "Vehicle";
     }
   } else {
-    Serial.printf("Name request failed, error: %d\n", httpResponseCode);
+    // Improved error reporting
+    String errorMsg;
+    switch (httpResponseCode) {
+      case -1:
+        errorMsg = "Connection failed";
+        break;
+      case -2:
+        errorMsg = "Connection lost";
+        break;
+      case -3:
+        errorMsg = "Connection timed out";
+        break;
+      case -4:
+        errorMsg = "Server sent invalid response";
+        break;
+      case -5:
+        errorMsg = "Connection refused";
+        break;
+      case -6:
+        errorMsg = "Invalid server response";
+        break;
+      case -7:
+        errorMsg = "Failed to allocate stream";
+        break;
+      case -8:
+        errorMsg = "Not enough memory";
+        break;
+      case -9:
+        errorMsg = "Invalid HTTP response";
+        break;
+      case -10:
+        errorMsg = "More data pending";
+        break;
+      case -11:
+        errorMsg = "Connection timeout";
+        break;
+      default:
+        errorMsg = "Unknown error";
+    }
+    Serial.printf("Name request failed, error: %d (%s)\n", httpResponseCode, errorMsg.c_str());
   }
   
   http.end();
@@ -316,6 +403,13 @@ void drawUI() {
       // Find unique IP addresses
       for (int i = 0; i < n && uniqueCount < 3; i++) {
         String currentIP = MDNS.IP(i).toString();
+        
+        // Filter out invalid IPs like 0.0.0.0 early
+        if (currentIP == "0.0.0.0" || currentIP.length() == 0) {
+          Serial.println("Skipping invalid IP: " + currentIP);
+          continue;
+        }
+        
         bool isDuplicate = false;
         
         // Check if this IP is already in our unique list
@@ -329,6 +423,7 @@ void drawUI() {
         // If not a duplicate, add to our list
         if (!isDuplicate) {
           uniqueIPs[uniqueCount++] = currentIP;
+          Serial.println("Found unique vehicle IP: " + currentIP);
         }
       }
       
@@ -382,19 +477,23 @@ void drawUI() {
     // Draw WiFi status with icon and SSID
     display.setFont(&FreeSans9pt7b); // Use smaller proportional font for WiFi info
     display.setTextSize(1);
-    char wifiBuffer[64];
     wifiConnected = (WiFi.status() == WL_CONNECTED);
-    if (wifiConnected) {
-      // Draw WiFi icon instead of "OK" text
-      display.drawBitmap(4, 165, WIFI_ICON, 20, 20, GxEPD_BLACK);
-      snprintf(wifiBuffer, sizeof(wifiBuffer), "%s", WIFI_SSID);
-      display.setCursor(30, 180); // Position text after the larger icon
-    } else {
-      snprintf(wifiBuffer, sizeof(wifiBuffer), "WiFi: ----");
-      display.setCursor(4, 180);
-    }
     
-    display.print(wifiBuffer);
+    if (wifiConnected) {
+      // Draw WiFi icon
+      display.drawBitmap(4, 165, WIFI_ICON, 20, 20, GxEPD_BLACK);
+      
+      // Draw SSID
+      display.setCursor(30, 179);
+      display.print(WIFI_SSID);
+      
+      // Draw IP address below SSID
+      display.setCursor(30, 197);
+      display.print(ipAddress);
+    } else {
+      display.setCursor(4, 180);
+      display.print("WiFi: ----");
+    }
     
     // Add uptime in minutes on the lower right corner
     deviceUptime = millis() / 60000; // Convert milliseconds to minutes
@@ -410,6 +509,93 @@ void drawUI() {
   } while (display.nextPage());
 }
 
+// Function to check WiFi connection and reconnect if needed
+void checkAndReconnectWiFi() {
+  if (WiFi.status() != WL_CONNECTED) {
+    // If this is a new disconnection, record the time
+    if (wifiDisconnectedTime == 0) {
+      wifiDisconnectedTime = millis();
+      reconnectionAttempts = 0;
+      Serial.println("WiFi disconnected, starting reconnection attempts...");
+    }
+    
+    // Increment attempt counter
+    reconnectionAttempts++;
+    
+    Serial.printf("WiFi disconnected, attempt %d of %d to reconnect...\n", 
+                 reconnectionAttempts, MAX_RECONNECTION_ATTEMPTS);
+    
+    WiFi.disconnect();
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    
+    // Wait briefly for connection
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 10) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+      // Reset the disconnection timer and attempt counter since we're connected again
+      wifiDisconnectedTime = 0;
+      reconnectionAttempts = 0;
+      
+      ipAddress = WiFi.localIP().toString(); // Update IP address variable
+      Serial.println("\nWiFi reconnected");
+      Serial.print("IP address: ");
+      Serial.println(ipAddress);
+      
+      // Restart mDNS service after reconnecting
+      MDNS.end();
+      if (MDNS.begin(OTA_HOSTNAME)) {
+        Serial.println("mDNS responder restarted");
+      } else {
+        Serial.println("Error restarting mDNS responder");
+      }
+    } else if (reconnectionAttempts >= MAX_RECONNECTION_ATTEMPTS) {
+      // We've tried enough times, go to deep sleep to save power
+      Serial.println("Maximum WiFi reconnection attempts reached.");
+      
+      // Display sleep message on screen
+      display.setFullWindow();
+      display.firstPage();
+      do {
+        display.fillScreen(GxEPD_WHITE);
+        display.setTextColor(GxEPD_BLACK);
+        display.setFont(&FreeMonoBold12pt7b);
+        display.setCursor(10, 80);
+        display.println("WiFi unavailable");
+        display.setCursor(10, 120);
+        display.println("Sleeping for 60s");
+        display.setCursor(10, 160);
+        display.println("to save power...");
+      } while (display.nextPage());
+      
+      Serial.println("Going to deep sleep for 60 seconds to save power...");
+      delay(1000); // Give time for serial output and display to complete
+      
+      // Configure wake up source as timer
+      esp_sleep_enable_timer_wakeup(WIFI_DEEP_SLEEP_DURATION);
+      
+      // Go to deep sleep
+      esp_deep_sleep_start();
+      
+      // Code will continue from setup() after waking up
+    }
+  } else {
+    // We're connected, reset the disconnection timer and attempt counter
+    wifiDisconnectedTime = 0;
+    reconnectionAttempts = 0;
+    
+    // Print IP address 
+    ipAddress = WiFi.localIP().toString();
+    Serial.print("WiFi connected. IP address: ");
+    Serial.println(ipAddress);
+  }
+}
+
 // Setup OTA updates
 void setupOTA() {
   // Connect to WiFi
@@ -418,7 +604,7 @@ void setupOTA() {
   
   // Wait for connection
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {  // Increased from 20 to 30
     delay(500);
     Serial.print(".");
     attempts++;
@@ -437,7 +623,11 @@ void setupOTA() {
   // Set up mDNS responder
   if (MDNS.begin(OTA_HOSTNAME)) {
     Serial.println("mDNS responder started");
+    // Explicitly advertise the OTA service
+    MDNS.addService("arduino", "tcp", 3232);
     Serial.printf("You can update firmware using: %s.local\n", OTA_HOSTNAME);
+  } else {
+    Serial.println("Error starting mDNS responder");
   }
   
   // Initialize OTA
@@ -466,47 +656,6 @@ void setupOTA() {
   
   ArduinoOTA.begin();
   Serial.println("OTA setup complete");
-}
-
-// Function to check WiFi connection and reconnect if needed
-void checkAndReconnectWiFi() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi disconnected, reconnecting...");
-    WiFi.disconnect();
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    
-    // Wait briefly for connection
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 10) {
-      delay(500);
-      Serial.print(".");
-      attempts++;
-    }
-    
-    if (WiFi.status() == WL_CONNECTED) {
-      ipAddress = WiFi.localIP().toString(); // Update IP address variable
-      Serial.println("\nWiFi reconnected");
-      Serial.print("IP address: ");
-      Serial.println(ipAddress);
-      
-      // Restart mDNS service after reconnecting
-      MDNS.end();
-      if (MDNS.begin(OTA_HOSTNAME)) {
-        Serial.println("mDNS responder restarted");
-      } else {
-        Serial.println("Error restarting mDNS responder");
-      }
-      
-      // No need to restart ArduinoOTA as it works at the application level
-      // and will use the new WiFi connection automatically
-    }
-  } else {
-    // Print IP address even if already connected
-    ipAddress = WiFi.localIP().toString();
-    Serial.print("WiFi connected. IP address: ");
-    Serial.println(ipAddress);
-  }
 }
 
 // Function to setup web server
@@ -572,8 +721,8 @@ void loop() {
   static unsigned long lastWiFiCheck = 0;
   unsigned long currentTime = millis();
 
-  // Check and reconnect WiFi if disconnected (every 30 seconds)
-  if (currentTime - lastWiFiCheck >= 30000) {
+  // Check and reconnect WiFi if disconnected (every 15 seconds instead of 30)
+  if (currentTime - lastWiFiCheck >= 15000) {
     checkAndReconnectWiFi();
     lastWiFiCheck = currentTime;
   }
@@ -583,11 +732,11 @@ void loop() {
     lastDrawTime = currentTime;
   }
   
-  // Handle OTA updates
+  // Handle OTA updates - moved higher in the loop for priority
   ArduinoOTA.handle();
   
   // Handle web server client requests
   server.handleClient();
 
-  delay(50);
+  delay(10);  // Reduced from 50ms to 10ms to make the loop more responsive
 }
