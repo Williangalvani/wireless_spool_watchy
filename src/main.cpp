@@ -21,6 +21,7 @@
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
 #include <HTTPClient.h>
+#include <WebServer.h>
 
 // WiFi icon bitmap (20x20 pixels)
 const unsigned char WIFI_ICON[] PROGMEM = {
@@ -50,7 +51,19 @@ const unsigned char WIFI_ICON[] PROGMEM = {
 // #define WIFI_SSID "Pão de Batata"
 #define WIFI_SSID "spool-iot"
 #define WIFI_PASSWORD "bananaamassadinha"
-#define OTA_HOSTNAME "watchy-lvgl"
+#define OTA_HOSTNAME "watchy-lvgl2"
+
+// Web server on port 80
+WebServer server(80);
+
+// Variables to store screen data for web server
+String vehicleNames[3];
+float vehicleVoltages[3];
+int vehicleCount = 0;
+float batteryVoltage = 0.0f;
+bool wifiConnected = false;
+unsigned long deviceUptime = 0;
+String ipAddress = "0.0.0.0"; // Add variable to store IP address
 
 // Create the display instance
 GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> display(
@@ -215,6 +228,56 @@ String getVehicleName(const String& vehicleIP) {
   return vehicleName;
 }
 
+// Function to handle root path on web server
+void handleRoot() {
+  String html = "<!DOCTYPE html><html><head><title>Watchy Status</title>";
+  html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  html += "</head><body><h1>Watchy Status</h1>";
+  
+  // Battery section
+  html += "<h2>Battery: " + String(batteryVoltage, 2) + "V</h2>";
+  
+  // Vehicles section
+  html += "<h2>Vehicles:</h2>";
+  if (vehicleCount > 0) {
+    html += "<ul>";
+    for (int i = 0; i < vehicleCount; i++) {
+      html += "<li>" + vehicleNames[i];
+      if (vehicleVoltages[i] > 0) {
+        html += ": " + String(vehicleVoltages[i], 1) + "V";
+      } else {
+        html += ": --";
+      }
+      html += "</li>";
+    }
+    html += "</ul>";
+  } else {
+    html += "<p>No vehicles</p>";
+  }
+  
+  // WiFi status
+  html += "<p>WiFi: " + String(wifiConnected ? WIFI_SSID : "----") + "</p>";
+  
+  // IP Address
+  html += "<p>IP: " + ipAddress + "</p>";
+  
+  // Uptime
+  html += "<p>Uptime: " + String(deviceUptime) + "m</p>";
+  
+  // Control buttons
+  html += "<p><a href=\"/\">Refresh</a> | <a href=\"/reboot\" onclick=\"return confirm('Are you sure you want to reboot the device?');\">Reboot</a></p>";
+  
+  html += "</body></html>";
+  server.send(200, "text/html", html);
+}
+
+// Handle reboot request
+void handleReboot() {
+  server.send(200, "text/html", "<html><body><h1>Rebooting...</h1><p>Device will restart in a few seconds.</p><p><a href=\"/\">Back to status page</a></p></body></html>");
+  delay(1000); // Give server time to send the response
+  ESP.restart();
+}
+
 // Function to draw UI on the display
 void drawUI() {
   display.setFullWindow();
@@ -225,6 +288,7 @@ void drawUI() {
     
     // Draw battery voltage at top
     float voltage = BatteryDisplay::getInstance()->getVoltage();
+    batteryVoltage = voltage; // Store for web server
     char batteryBuffer[16];
     int voltsInt = (int)voltage;
     int voltsDec = (int)((voltage - voltsInt) * 100);
@@ -240,6 +304,9 @@ void drawUI() {
     // Draw mavlink status - up to 3 vehicles
     int n = MDNS.queryService("mavlink", "udp");
     int yPos = 80; // Start higher up since we removed the "Vehicle" label
+    
+    // Reset vehicle count for web server
+    vehicleCount = 0;
     
     if (n > 0) {
       // Array to store unique IP addresses
@@ -282,6 +349,11 @@ void drawUI() {
         // Get battery voltage from the vehicle
         float batteryVoltage = getMavlinkBatteryVoltage(uniqueIPs[i]);
         
+        // Store for web server
+        vehicleNames[vehicleCount] = vehicleName;
+        vehicleVoltages[vehicleCount] = batteryVoltage;
+        vehicleCount++;
+        
         // Display the name and battery voltage
         char vehicleBuffer[32];
         if (batteryVoltage > 0) {
@@ -311,7 +383,8 @@ void drawUI() {
     display.setFont(&FreeSans9pt7b); // Use smaller proportional font for WiFi info
     display.setTextSize(1);
     char wifiBuffer[64];
-    if (WiFi.status() == WL_CONNECTED) {
+    wifiConnected = (WiFi.status() == WL_CONNECTED);
+    if (wifiConnected) {
       // Draw WiFi icon instead of "OK" text
       display.drawBitmap(4, 165, WIFI_ICON, 20, 20, GxEPD_BLACK);
       snprintf(wifiBuffer, sizeof(wifiBuffer), "%s", WIFI_SSID);
@@ -324,9 +397,9 @@ void drawUI() {
     display.print(wifiBuffer);
     
     // Add uptime in minutes on the lower right corner
-    unsigned long uptimeMinutes = millis() / 60000; // Convert milliseconds to minutes
+    deviceUptime = millis() / 60000; // Convert milliseconds to minutes
     char uptimeBuffer[16];
-    snprintf(uptimeBuffer, sizeof(uptimeBuffer), "%lum", uptimeMinutes);
+    snprintf(uptimeBuffer, sizeof(uptimeBuffer), "%lum", deviceUptime);
     
     int16_t tbx, tby;
     uint16_t tbw, tbh;
@@ -356,9 +429,10 @@ void setupOTA() {
     return;
   }
   
+  ipAddress = WiFi.localIP().toString(); // Store IP address during initial setup
   Serial.println("\nWiFi connected");
   Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  Serial.println(ipAddress);
   
   // Set up mDNS responder
   if (MDNS.begin(OTA_HOSTNAME)) {
@@ -411,11 +485,36 @@ void checkAndReconnectWiFi() {
     }
     
     if (WiFi.status() == WL_CONNECTED) {
+      ipAddress = WiFi.localIP().toString(); // Update IP address variable
       Serial.println("\nWiFi reconnected");
       Serial.print("IP address: ");
-      Serial.println(WiFi.localIP());
+      Serial.println(ipAddress);
+      
+      // Restart mDNS service after reconnecting
+      MDNS.end();
+      if (MDNS.begin(OTA_HOSTNAME)) {
+        Serial.println("mDNS responder restarted");
+      } else {
+        Serial.println("Error restarting mDNS responder");
+      }
+      
+      // No need to restart ArduinoOTA as it works at the application level
+      // and will use the new WiFi connection automatically
     }
+  } else {
+    // Print IP address even if already connected
+    ipAddress = WiFi.localIP().toString();
+    Serial.print("WiFi connected. IP address: ");
+    Serial.println(ipAddress);
   }
+}
+
+// Function to setup web server
+void setupWebServer() {
+  server.on("/", handleRoot);
+  server.on("/reboot", handleReboot);
+  server.begin();
+  Serial.println("Web server started");
 }
 
 // Arduino setup function
@@ -458,6 +557,9 @@ void setup() {
   // Set up OTA update functionality
   setupOTA();
   
+  // Setup web server
+  setupWebServer();
+  
   // Draw initial UI
   drawUI();
   
@@ -483,6 +585,9 @@ void loop() {
   
   // Handle OTA updates
   ArduinoOTA.handle();
+  
+  // Handle web server client requests
+  server.handleClient();
 
   delay(50);
 }
