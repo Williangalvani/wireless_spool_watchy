@@ -69,7 +69,7 @@ String ipAddress = "0.0.0.0"; // Add variable to store IP address
 // Track WiFi connection attempts
 unsigned long wifiDisconnectedTime = 0;
 int reconnectionAttempts = 0;
-const int MAX_RECONNECTION_ATTEMPTS = 5; // Try 5 times before sleeping
+const int MAX_RECONNECTION_ATTEMPTS = 1; // Try 5 times before sleeping
 const unsigned long WIFI_DEEP_SLEEP_DURATION = 60e6; // 60 seconds in microseconds
 
 // Create the display instance
@@ -129,7 +129,7 @@ public:
     // ADC range is 0-4095 for 0-3.3V
     int adcValue = analogRead(batteryPin);
     float voltage = adcValue * 3.3 * 2 / 4095.0;
-    currentVoltage = voltage * 1.05;
+    currentVoltage = voltage * 1.0678;
     Serial.printf("Battery ADC: %d, Voltage: %.2fV\n", adcValue, voltage);
   }
 };
@@ -510,7 +510,7 @@ void drawUI() {
 }
 
 // Function to check WiFi connection and reconnect if needed
-void checkAndReconnectWiFi() {
+bool checkAndReconnectWiFi() {
   if (WiFi.status() != WL_CONNECTED) {
     // If this is a new disconnection, record the time
     if (wifiDisconnectedTime == 0) {
@@ -554,22 +554,42 @@ void checkAndReconnectWiFi() {
       } else {
         Serial.println("Error restarting mDNS responder");
       }
+      
+      return true; // Return true to indicate successful connection
     } else if (reconnectionAttempts >= MAX_RECONNECTION_ATTEMPTS) {
       // We've tried enough times, go to deep sleep to save power
       Serial.println("Maximum WiFi reconnection attempts reached.");
       
-      // Display sleep message on screen
+      // Get current battery voltage
+      float voltage = BatteryDisplay::getInstance()->getVoltage();
+      char batteryBuffer[16];
+      int voltsInt = (int)voltage;
+      int voltsDec = (int)((voltage - voltsInt) * 100);
+      snprintf(batteryBuffer, sizeof(batteryBuffer), "%d.%02dV", voltsInt, voltsDec);
+      
+      // Display sleep message on screen with battery voltage
       display.setFullWindow();
       display.firstPage();
       do {
         display.fillScreen(GxEPD_WHITE);
         display.setTextColor(GxEPD_BLACK);
-        display.setFont(&FreeMonoBold12pt7b);
-        display.setCursor(10, 80);
-        display.println("WiFi unavailable");
+        
+        // Draw battery voltage in the same position as regular UI
+        display.setFont(&FreeSansBold18pt7b);
+        display.setCursor(0, 50);
+        display.setTextSize(2);
+        display.print(batteryBuffer);
+        
+        // Draw sleep message
+        display.setFont(&FreeSansBold18pt7b);
         display.setCursor(10, 120);
-        display.println("Sleeping for 60s");
+        display.setTextSize(1);
+        display.println("OFF");
+        
         display.setCursor(10, 160);
+        display.setFont(&FreeSansBold9pt7b);
+        display.println("Sleeping for 60s");
+        display.setCursor(10, 180);
         display.println("to save power...");
       } while (display.nextPage());
       
@@ -583,7 +603,10 @@ void checkAndReconnectWiFi() {
       esp_deep_sleep_start();
       
       // Code will continue from setup() after waking up
+      return false; // This line won't actually execute due to deep sleep
     }
+    
+    return false; // Return false to indicate connection failed
   } else {
     // We're connected, reset the disconnection timer and attempt counter
     wifiDisconnectedTime = 0;
@@ -593,32 +616,21 @@ void checkAndReconnectWiFi() {
     ipAddress = WiFi.localIP().toString();
     Serial.print("WiFi connected. IP address: ");
     Serial.println(ipAddress);
+    
+    return true; // Return true to indicate already connected
   }
 }
 
-// Setup OTA updates
-void setupOTA() {
-  // Connect to WiFi
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+// Setup WiFi and OTA updates
+bool setupWiFiAndOTA() {
+  // Try to connect using the common reconnect function
+  bool connected = checkAndReconnectWiFi();
   
-  // Wait for connection
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {  // Increased from 20 to 30
-    delay(500);
-    Serial.print(".");
-    attempts++;
+  // If connection failed, the function will go to deep sleep
+  // so we won't reach this point unless we're connected
+  if (!connected) {
+    return false;
   }
-  
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("\nWiFi connection failed!");
-    return;
-  }
-  
-  ipAddress = WiFi.localIP().toString(); // Store IP address during initial setup
-  Serial.println("\nWiFi connected");
-  Serial.print("IP address: ");
-  Serial.println(ipAddress);
   
   // Set up mDNS responder
   if (MDNS.begin(OTA_HOSTNAME)) {
@@ -656,6 +668,8 @@ void setupOTA() {
   
   ArduinoOTA.begin();
   Serial.println("OTA setup complete");
+  
+  return true;
 }
 
 // Function to setup web server
@@ -686,30 +700,22 @@ void setup() {
   display.setTextColor(GxEPD_BLACK);
   display.setFont(&FreeMonoBold9pt7b);
   
-  // Show a startup message
-  display.setFullWindow();
-  display.firstPage();
-  do {
-    display.fillScreen(GxEPD_WHITE);
-    display.setCursor(10, 30);
-    display.println("Starting...");
-    display.setCursor(10, 60);
-    display.println("Watchy GxEPD2");
-  } while(display.nextPage());
-  
-  // Allow time for display to refresh
-  delay(1000);
-  
-  // Initialize battery monitor
+  // Initialize battery monitor (do this early to get readings)
   BatteryDisplay::getInstance();
   
-  // Set up OTA update functionality
-  setupOTA();
+  // Set up OTA update functionality using the reconnect function
+  // If WiFi is unavailable, this will go to deep sleep
+  if (!setupWiFiAndOTA()) {
+    // This code will actually never execute because deep sleep will restart the device
+    // But we include it for clarity
+    Serial.println("Failed to connect to WiFi, going to deep sleep");
+    return;
+  }
   
   // Setup web server
   setupWebServer();
   
-  // Draw initial UI
+  // Draw initial UI with real data
   drawUI();
   
   Serial.println("Setup complete");
