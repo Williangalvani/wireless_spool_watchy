@@ -519,10 +519,73 @@ bool checkAndReconnectWiFi() {
       Serial.println("WiFi disconnected, starting reconnection attempts...");
     }
     
+    // First scan for the WiFi network
+    Serial.println("Scanning for WiFi networks...");
+    int n = WiFi.scanNetworks();
+    Serial.printf("Scan complete, %d networks found\n", n);
+    
+    bool networkFound = false;
+    for (int i = 0; i < n && !networkFound; i++) {
+      Serial.printf("  %d: %s (%d dBm)\n", i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i));
+      if (WiFi.SSID(i) == WIFI_SSID) {
+        networkFound = true;
+        Serial.printf("Target network '%s' found with signal strength %d dBm\n", WIFI_SSID, WiFi.RSSI(i));
+      }
+    }
+    
+    if (!networkFound) {
+      Serial.printf("Target network '%s' not found in scan results\n", WIFI_SSID);
+      
+      // Get current battery voltage
+      float voltage = BatteryDisplay::getInstance()->getVoltage();
+      char batteryBuffer[16];
+      int voltsInt = (int)voltage;
+      int voltsDec = (int)((voltage - voltsInt) * 100);
+      snprintf(batteryBuffer, sizeof(batteryBuffer), "%d.%02dV", voltsInt, voltsDec);
+      
+      // Display sleep message on screen with battery voltage
+      display.setFullWindow();
+      display.firstPage();
+      do {
+        display.fillScreen(GxEPD_WHITE);
+        display.setTextColor(GxEPD_BLACK);
+        
+        // Draw battery voltage in the same position as regular UI
+        display.setFont(&FreeSansBold18pt7b);
+        display.setCursor(0, 50);
+        display.setTextSize(2);
+        display.print(batteryBuffer);
+        
+        // Draw sleep message
+        display.setFont(&FreeSansBold18pt7b);
+        display.setCursor(10, 120);
+        display.setTextSize(1);
+        display.println("OFF");
+        
+        display.setCursor(10, 160);
+        display.setFont(&FreeSansBold9pt7b);
+        display.println("No WiFi found");
+        display.setCursor(10, 180);
+        display.println("Sleeping for 60s...");
+      } while (display.nextPage());
+      
+      Serial.println("Going to deep sleep for 60 seconds...");
+      delay(1000); // Give time for serial output and display to complete
+      
+      // Configure wake up source as timer
+      esp_sleep_enable_timer_wakeup(WIFI_DEEP_SLEEP_DURATION);
+      
+      // Go to deep sleep
+      esp_deep_sleep_start();
+      
+      // Code will continue from setup() after waking up
+      return false; // This line won't actually execute due to deep sleep
+    }
+    
     // Increment attempt counter
     reconnectionAttempts++;
     
-    Serial.printf("WiFi disconnected, attempt %d of %d to reconnect...\n", 
+    Serial.printf("WiFi network found, attempt %d of %d to connect...\n", 
                  reconnectionAttempts, MAX_RECONNECTION_ATTEMPTS);
     
     WiFi.disconnect();
@@ -588,9 +651,9 @@ bool checkAndReconnectWiFi() {
         
         display.setCursor(10, 160);
         display.setFont(&FreeSansBold9pt7b);
-        display.println("Sleeping for 60s");
+        display.println("WiFi connect failed");
         display.setCursor(10, 180);
-        display.println("to save power...");
+        display.println("Sleeping for 60s...");
       } while (display.nextPage());
       
       Serial.println("Going to deep sleep for 60 seconds to save power...");
